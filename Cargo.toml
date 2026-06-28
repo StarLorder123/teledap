@@ -1,0 +1,49 @@
+[package]
+name = "teledap"
+version = "0.1.0"
+edition = "2021"
+description = "MCP Server bridging AI assistants to embedded hardware debugging tools (CodeLLDB + OpenOCD)"
+license = "MIT"
+authors = ["JinHaoLee"]
+
+[dependencies]
+# --- Async Runtime ---
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+
+# --- MCP Server (Official Rust SDK) ---
+rmcp = { version = "1.8", features = ["server", "transport-io", "macros", "schemars"] }
+
+# --- Serialization ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1.2"
+
+# --- Concurrency ---
+parking_lot = "0.12"
+
+# --- Time ---
+chrono = { version = "0.4", features = ["serde"] }
+
+# --- Error Handling ---
+anyhow = "1"
+thiserror = "2"
+
+# --- Internal Diagnostics ---
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# --- CLI ---
+clap = { version = "4", features = ["derive"] }
+
+# --- UUID for session IDs ---
+uuid = { version = "1", features = ["v4"] }
+
+# --- Bytes for codec ---
+bytes = "1"
+
+# --- Futures for stream processing ---
+futures = "0.3"
+
+[dev-dependencies]
+tokio-test = "0.4"

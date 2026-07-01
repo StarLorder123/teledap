@@ -306,15 +306,20 @@ impl DapDriver {
         Ok(())
     }
 
-    /// Launch the target ELF binary, optionally connecting to a GDB server.
+    /// Launch the target binary, optionally connecting to a GDB server.
+    ///
+    /// When `gdb_remote` is `None`, the binary is launched locally on the host
+    /// (no hardware required). Set `stop_on_entry` to `true` for local debugging
+    /// to halt at the program entry point.
     pub async fn launch(
         &self,
         elf_path: &str,
         gdb_remote: Option<&str>,
+        stop_on_entry: bool,
     ) -> Result<(), DriverError> {
         let mut args = json!({
             "program": elf_path,
-            "stopOnEntry": false,
+            "stopOnEntry": stop_on_entry,
         });
 
         if let Some(remote) = gdb_remote {
@@ -324,7 +329,7 @@ impl DapDriver {
         }
 
         let _resp = self.send_request("launch", Some(args)).await?;
-        tracing::info!("DAP launch: {} (gdb-remote: {:?})", elf_path, gdb_remote);
+        tracing::info!("DAP launch: {} (gdb-remote: {:?}, stopOnEntry: {})", elf_path, gdb_remote, stop_on_entry);
         Ok(())
     }
 

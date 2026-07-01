@@ -22,7 +22,10 @@ impl SessionState {
     /// Returns the set of states that can be transitioned TO from the current state.
     pub fn allowed_transitions(&self) -> &[SessionState] {
         match self {
-            SessionState::Disconnected => &[SessionState::Initialized],
+            SessionState::Disconnected => &[
+                SessionState::Initialized,
+                SessionState::Attached,
+            ],
             SessionState::Initialized => &[
                 SessionState::Attached,
                 SessionState::Disconnected,
@@ -80,11 +83,7 @@ mod tests {
 
     #[test]
     fn test_invalid_transitions() {
-        // Cannot go directly from Disconnected to Attached
-        assert!(SessionState::Disconnected
-            .validate_transition(SessionState::Attached)
-            .is_err());
-        // Cannot go from Disconnected to Halted
+        // Cannot go from Disconnected to Halted (must attach first)
         assert!(SessionState::Disconnected
             .validate_transition(SessionState::Halted)
             .is_err());
@@ -92,6 +91,14 @@ mod tests {
         assert!(SessionState::Initialized
             .validate_transition(SessionState::Halted)
             .is_err());
+    }
+
+    #[test]
+    fn test_disconnected_to_attached() {
+        // Disconnected -> Attached is valid for local debug mode
+        assert!(SessionState::Disconnected
+            .validate_transition(SessionState::Attached)
+            .is_ok());
     }
 
     #[test]

@@ -100,15 +100,18 @@ impl SessionCoordinator {
 
     // ── High-Level Operations ─────────────────────────────────────
 
-    /// One-click auto-launch: connects OpenOCD, starts CodeLLDB,
-    /// initializes DAP, launches the ELF with gdb-remote, and halts.
+    /// One-click auto-launch: connects OpenOCD (remote mode) or launches
+    /// locally (local mode), starts CodeLLDB, loads the binary, and halts.
     ///
     /// This is the primary entry point for AI-driven debugging.
-    /// The LLM only needs to provide the ELF file path; TeleDAP
-    /// handles the entire toolchain orchestration.
+    ///
+    /// # Modes
+    /// - `"remote"` (default): hardware debugging via OpenOCD + gdb-remote
+    /// - `"local"`: host binary debugging via CodeLLDB only, no hardware needed
     pub async fn auto_launch(
         &self,
         elf_path: &str,
+        mode: &str,
     ) -> Result<String, TeleDapError> {
         // Validate starting state
         let current = self.current_state().await;
@@ -120,89 +123,153 @@ impl SessionCoordinator {
             });
         }
 
-        self.transition(SessionState::Initialized).await?;
+        let is_local = mode == "local";
 
-        let host = &self.openocd_host.clone();
-        let tcl_port = self.openocd_tcl_port;
-        let gdb_port = self.openocd_gdb_port;
+        if is_local {
+            // ── Local Mode: CodeLLDB only, no OpenOCD ──────────────
 
-        // 1. Connect to OpenOCD
-        {
-            let driver = OpenOcdDriver::new(self.audit.clone());
-            driver.connect(host, tcl_port).await.map_err(|e| {
-                TeleDapError::Driver(e)
-            })?;
-            *self.openocd.write().await = Some(driver);
-        }
+            // 1. Start CodeLLDB
+            {
+                let driver = DapDriver::new(
+                    self.audit.clone(),
+                    self.max_dap_frame,
+                );
+                driver
+                    .start(&self.codelldb_path)
+                    .await
+                    .map_err(TeleDapError::Driver)?;
+                *self.dap.write().await = Some(driver);
+            }
 
-        // 2. Start CodeLLDB
-        {
-            let driver = DapDriver::new(
-                self.audit.clone(),
-                self.max_dap_frame,
+            // 2. Initialize the DAP session
+            {
+                let dap_guard = self.dap.read().await;
+                let dap = dap_guard
+                    .as_ref()
+                    .ok_or(TeleDapError::NotConnected(
+                        "DAP driver not available".into(),
+                    ))?;
+                dap.initialize().await.map_err(TeleDapError::Driver)?;
+            }
+
+            // 3. Launch locally: no gdb-remote, stop at main()
+            {
+                let dap_guard = self.dap.read().await;
+                let dap = dap_guard
+                    .as_ref()
+                    .ok_or(TeleDapError::NotConnected(
+                        "DAP driver not available".into(),
+                    ))?;
+                dap.launch(elf_path, None, true)
+                    .await
+                    .map_err(TeleDapError::Driver)?;
+            }
+
+            self.transition(SessionState::Attached).await?;
+            self.transition(SessionState::Halted).await?;
+
+            let msg = format!(
+                "Auto-launch (local) complete. Binary '{}' loaded. Target halted at entry point.",
+                elf_path
             );
-            driver
-                .start(&self.codelldb_path)
-                .await
-                .map_err(TeleDapError::Driver)?;
-            *self.dap.write().await = Some(driver);
+
+            self.audit.log(
+                LogSource::McpTrigger,
+                LogDirection::Inbound,
+                "auto_launch",
+                Some(serde_json::json!({"elf_path": elf_path, "mode": "local"})),
+                Some(msg.clone()),
+                None,
+            );
+
+            Ok(msg)
+        } else {
+            // ── Remote Mode: OpenOCD + CodeLLDB + gdb-remote ──────
+
+            self.transition(SessionState::Initialized).await?;
+
+            let host = &self.openocd_host.clone();
+            let tcl_port = self.openocd_tcl_port;
+            let gdb_port = self.openocd_gdb_port;
+
+            // 1. Connect to OpenOCD
+            {
+                let driver = OpenOcdDriver::new(self.audit.clone());
+                driver.connect(host, tcl_port).await.map_err(|e| {
+                    TeleDapError::Driver(e)
+                })?;
+                *self.openocd.write().await = Some(driver);
+            }
+
+            // 2. Start CodeLLDB
+            {
+                let driver = DapDriver::new(
+                    self.audit.clone(),
+                    self.max_dap_frame,
+                );
+                driver
+                    .start(&self.codelldb_path)
+                    .await
+                    .map_err(TeleDapError::Driver)?;
+                *self.dap.write().await = Some(driver);
+            }
+
+            // 3. Initialize the DAP session
+            {
+                let dap_guard = self.dap.read().await;
+                let dap = dap_guard
+                    .as_ref()
+                    .ok_or(TeleDapError::NotConnected(
+                        "DAP driver not available".into(),
+                    ))?;
+                dap.initialize().await.map_err(TeleDapError::Driver)?;
+            }
+
+            // 4. Launch with gdb-remote to OpenOCD
+            {
+                let dap_guard = self.dap.read().await;
+                let dap = dap_guard
+                    .as_ref()
+                    .ok_or(TeleDapError::NotConnected(
+                        "DAP driver not available".into(),
+                    ))?;
+                let gdb_target = format!("{}:{}", host, gdb_port);
+                dap.launch(elf_path, Some(&gdb_target), false)
+                    .await
+                    .map_err(TeleDapError::Driver)?;
+            }
+
+            self.transition(SessionState::Attached).await?;
+
+            // 5. Reset and halt the target
+            {
+                let ocd_guard = self.openocd.read().await;
+                let ocd = ocd_guard
+                    .as_ref()
+                    .ok_or(TeleDapError::NotConnected(
+                        "OpenOCD driver not available".into(),
+                    ))?;
+                ocd.reset_halt().await.map_err(TeleDapError::Driver)?;
+            }
+
+            self.transition(SessionState::Halted).await?;
+
+            let msg = format!(
+                "Auto-launch (remote) complete. ELF '{}' loaded. OpenOCD: {}:{}, GDB: {}:{}. Target halted at reset vector.",
+                elf_path, host, tcl_port, host, gdb_port
+            );
+
+            self.audit.log(
+                LogSource::McpTrigger,
+                LogDirection::Inbound,
+                "auto_launch",
+                Some(serde_json::json!({"elf_path": elf_path, "mode": "remote"})),
+                Some(msg.clone()),
+                None,
+            );
+
+            Ok(msg)
         }
-
-        // 3. Initialize the DAP session
-        {
-            let dap_guard = self.dap.read().await;
-            let dap = dap_guard
-                .as_ref()
-                .ok_or(TeleDapError::NotConnected(
-                    "DAP driver not available".into(),
-                ))?;
-            dap.initialize().await.map_err(TeleDapError::Driver)?;
-        }
-
-        // 4. Launch with gdb-remote to OpenOCD
-        {
-            let dap_guard = self.dap.read().await;
-            let dap = dap_guard
-                .as_ref()
-                .ok_or(TeleDapError::NotConnected(
-                    "DAP driver not available".into(),
-                ))?;
-            let gdb_target = format!("{}:{}", host, gdb_port);
-            dap.launch(elf_path, Some(&gdb_target))
-                .await
-                .map_err(TeleDapError::Driver)?;
-        }
-
-        self.transition(SessionState::Attached).await?;
-
-        // 5. Reset and halt the target
-        {
-            let ocd_guard = self.openocd.read().await;
-            let ocd = ocd_guard
-                .as_ref()
-                .ok_or(TeleDapError::NotConnected(
-                    "OpenOCD driver not available".into(),
-                ))?;
-            ocd.reset_halt().await.map_err(TeleDapError::Driver)?;
-        }
-
-        self.transition(SessionState::Halted).await?;
-
-        let msg = format!(
-            "Auto-launch complete. ELF '{}' loaded. OpenOCD: {}:{}, GDB: {}:{}. Target halted at reset vector.",
-            elf_path, host, tcl_port, host, gdb_port
-        );
-
-        self.audit.log(
-            LogSource::McpTrigger,
-            LogDirection::Inbound,
-            "auto_launch",
-            Some(serde_json::json!({"elf_path": elf_path})),
-            Some(msg.clone()),
-            None,
-        );
-
-        Ok(msg)
     }
 
     /// Connect to OpenOCD Tcl RPC server.
@@ -271,6 +338,7 @@ impl SessionCoordinator {
         dap.launch(
             elf_path,
             gdb_target.as_deref(),
+            false,
         )
         .await
         .map_err(TeleDapError::Driver)?;
@@ -328,7 +396,8 @@ impl SessionCoordinator {
             // ── Disconnected State ──
             "auto_launch" if state == SessionState::Disconnected => {
                 let elf = get_str_param(args, "elf_path")?;
-                self.auto_launch(elf).await
+                let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("remote");
+                self.auto_launch(elf, mode).await
             }
 
             "connect_openocd" if state == SessionState::Disconnected => {

@@ -53,7 +53,13 @@ pub fn auto_launch_schema() -> Arc<Map<String, Value>> {
         "properties": {
             "elf_path": {
                 "type": "string",
-                "description": "Absolute path to the ELF firmware binary to debug"
+                "description": "Absolute path to the ELF/EXE binary to debug"
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["remote", "local"],
+                "description": "Debug mode: 'remote' for hardware via OpenOCD, 'local' for host binary without hardware",
+                "default": "remote"
             }
         },
         "required": ["elf_path"]

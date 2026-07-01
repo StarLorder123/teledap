@@ -5,8 +5,11 @@ use tokio_util::codec::{Decoder, Encoder};
 /// A single DAP protocol message, decoded from the wire.
 #[derive(Debug, Clone)]
 pub struct DapMessage {
-    /// Monotonic sequence number from the JSON body.
+    /// Monotonic sequence number from the JSON body (adapter-assigned).
     pub seq: u64,
+    /// For responses: the `request_seq` that matches the original request's `seq`.
+    /// Not present for requests or events.
+    pub request_seq: Option<u64>,
     /// "request", "response", or "event"
     pub msg_type: String,
     /// Command name for requests/responses.
@@ -135,15 +138,21 @@ impl Decoder for DapCodec {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
 
+        let request_seq = body
+            .get("request_seq")
+            .and_then(|v| v.as_u64());
+
         tracing::trace!(
-            "DAP decode: type={}, seq={}, body_len={}",
+            "DAP decode: type={}, seq={}, req_seq={:?}, body_len={}",
             msg_type,
             seq,
+            request_seq,
             content_length
         );
 
         Ok(Some(DapMessage {
             seq,
+            request_seq,
             msg_type,
             command,
             event,
@@ -246,6 +255,22 @@ mod tests {
         assert_eq!(msg.msg_type, "response");
         assert_eq!(msg.seq, 5);
         assert_eq!(msg.body["success"], true);
+    }
+
+    #[test]
+    fn test_decode_response_with_request_seq() {
+        // DAP responses carry request_seq to match the original request.
+        // This test ensures we extract it correctly — matching on seq alone
+        // would fail when the adapter sends events between responses.
+        let body = json!({"type":"response","seq":3,"request_seq":2,"command":"launch","success":true});
+        let mut buf = make_wire(body);
+        let mut codec = make_codec();
+
+        let msg = codec.decode(&mut buf).unwrap().unwrap();
+        assert_eq!(msg.msg_type, "response");
+        assert_eq!(msg.seq, 3);
+        assert_eq!(msg.request_seq, Some(2));
+        assert_eq!(msg.command.as_deref(), Some("launch"));
     }
 
     #[test]

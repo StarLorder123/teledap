@@ -211,13 +211,15 @@ impl DapDriver {
 
         tracing::debug!("DAP request sent: {} (seq={})", command, seq);
 
-        // Wait for matching response
+        // Wait for matching response.
+        // DAP responses carry `request_seq` to identify which request
+        // they answer; the adapter's own `seq` counter is independent.
         let mut rx = self.event_rx.lock().await;
         loop {
             match rx.recv().await {
                 Some(msg)
                     if msg.msg_type == "response"
-                        && msg.seq == seq =>
+                        && msg.request_seq == Some(seq) =>
                 {
                     if !msg.body.get("success").and_then(|v| v.as_bool()).unwrap_or(true) {
                         let error_msg = msg

@@ -1,0 +1,55 @@
+[package]
+name = "teledap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MCP Server bridging AI assistants to embedded hardware debugging tools (CodeLLDB + OpenOCD)"
+
+[dependencies]
+tokio.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+dap-types.workspace = true
+dap-codec.workspace = true
+dap-client.workspace = true
+
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "crates/dap-types",
+    "crates/dap-codec",
+    "crates/dap-client",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["JinHaoLee"]
+
+[workspace.dependencies]
+# --- Async Runtime ---
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+
+# --- Serialization ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# --- Internal ---
+bytes = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+
+# --- CLI ---
+clap = { version = "4", features = ["derive"] }
+
+# --- Local crates ---
+dap-types = { path = "crates/dap-types" }
+dap-codec = { path = "crates/dap-codec" }
+dap-client = { path = "crates/dap-client" }

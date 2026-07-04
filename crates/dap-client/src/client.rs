@@ -275,15 +275,8 @@ impl DapClient {
         match rx.await {
             Ok(Ok(response)) => {
                 if let Some(ref t) = self.trace {
-                    let result = response
-                        .body
-                        .as_ref()
-                        .map(|b| b.to_string());
-                    t.trace_response(
-                        Req::COMMAND,
-                        result,
-                        Some(elapsed.as_micros() as i64),
-                    );
+                    let result = response.body.as_ref().map(|b| b.to_string());
+                    t.trace_response(Req::COMMAND, result, Some(elapsed.as_micros() as i64));
                 }
                 if !response.success {
                     return Err(DapClientError::request_failed(

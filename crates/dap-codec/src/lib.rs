@@ -384,4 +384,99 @@ mod tests {
         let msg = codec.decode(&mut buf).unwrap().unwrap();
         assert!(msg.is_event());
     }
+
+    // ── Edge-case decoding ──────────────────────────────────────
+
+    #[test]
+    fn test_invalid_json_body() {
+        // Content-Length header is valid, the declared N bytes are present,
+        // but those bytes are garbage — not valid JSON.
+        let garbage = b"NOT VALID JSON!!";
+        let header = format!("Content-Length: {}\r\n\r\n", garbage.len());
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(header.as_bytes());
+        buf.extend_from_slice(garbage);
+
+        let mut codec = make_codec();
+        let result = codec.decode(&mut buf);
+        assert!(result.is_err(), "Garbage body should produce an error");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_progressive_split_feed_3_segments() {
+        // Build a complete request wire frame, then feed it in 3 chunks
+        // to simulate TCP stream fragmentation.
+        let body = serde_json::json!({
+            "type": "request",
+            "seq": 99,
+            "command": "evaluate",
+            "arguments": {"expression": "x", "frameId": 0}
+        });
+        let body_bytes = serde_json::to_vec(&body).unwrap();
+        let header = format!("Content-Length: {}\r\n\r\n", body_bytes.len());
+        let full_wire: Vec<u8> = header
+            .as_bytes()
+            .iter()
+            .chain(body_bytes.iter())
+            .copied()
+            .collect();
+
+        let mut codec = make_codec();
+        let mut buf = BytesMut::new();
+
+        // Segment 1: only the first few bytes (partial header)
+        let split1 = 10.min(full_wire.len());
+        buf.extend_from_slice(&full_wire[..split1]);
+        assert!(
+            codec.decode(&mut buf).unwrap().is_none(),
+            "Segment 1 (partial header) should return None"
+        );
+
+        // Segment 2: header complete + partial body
+        let body_start = header.len();
+        let split2 = body_start + (body_bytes.len() / 2).max(1);
+        buf.extend_from_slice(&full_wire[split1..split2.min(full_wire.len())]);
+        assert!(
+            codec.decode(&mut buf).unwrap().is_none(),
+            "Segment 2 (header complete, partial body) should return None"
+        );
+
+        // Segment 3: remainder
+        buf.extend_from_slice(&full_wire[split2.min(full_wire.len())..]);
+        let msg = codec
+            .decode(&mut buf)
+            .unwrap()
+            .expect("Segment 3 should yield a complete message");
+        assert!(msg.is_request());
+        assert_eq!(msg.seq(), 99);
+        assert_eq!(msg.command(), Some("evaluate"));
+        assert!(buf.is_empty(), "Buffer should be fully consumed");
+    }
+
+    #[test]
+    fn test_content_length_overdeclared_trailing_garbage() {
+        // Content-Length is larger than the valid JSON body, and the extra
+        // bytes are non-whitespace garbage. This should fail JSON parsing.
+        // (serde_json silently ignores trailing whitespace, so we use
+        // alphabetic garbage to reliably trigger an error.)
+        let valid_json = b"{\"type\":\"event\",\"seq\":0,\"event\":\"output\"}";
+        let declared_len = valid_json.len() + 20; // over-declare by 20 bytes
+        let mut body = valid_json.to_vec();
+        body.extend_from_slice(b"ABCDEFGHIJKLMNOPQRST"); // 20 bytes non-whitespace garbage
+
+        let header = format!("Content-Length: {}\r\n\r\n", declared_len);
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(header.as_bytes());
+        buf.extend_from_slice(&body); // body is exactly declared_len bytes
+
+        let mut codec = make_codec();
+        let result = codec.decode(&mut buf);
+        assert!(
+            result.is_err(),
+            "Over-declared body with trailing garbage should error"
+        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+    }
 }

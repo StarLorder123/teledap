@@ -61,10 +61,7 @@ impl TraceHandle {
     /// `(TraceHandle, JoinHandle<()>)` — The handle is cloneable and can be
     /// shared across subsystems. The `JoinHandle` can be awaited for graceful
     /// shutdown when all handles are dropped.
-    pub fn new(
-        log_dir: Option<PathBuf>,
-        max_ring_size: usize,
-    ) -> (Self, JoinHandle<()>) {
+    pub fn new(log_dir: Option<PathBuf>, max_ring_size: usize) -> (Self, JoinHandle<()>) {
         let (tx, ring, session_id, handle) = spawn_logger(log_dir, max_ring_size);
 
         (
@@ -107,12 +104,7 @@ impl TraceHandle {
     }
 
     /// Record a DAP response received from the debug adapter.
-    pub fn trace_response(
-        &self,
-        command: &str,
-        result: Option<String>,
-        duration_us: Option<i64>,
-    ) {
+    pub fn trace_response(&self, command: &str, result: Option<String>, duration_us: Option<i64>) {
         let truncated = result.map(|s| truncate(&s, MAX_RESULT_LEN));
         self.trace(TraceEntry {
             timestamp: Utc::now(),
@@ -244,7 +236,10 @@ mod tests {
     async fn test_trace_internal() {
         let (handle, _bg) = TraceHandle::new(None, 10);
 
-        handle.trace_internal("codelldb_started", Some(serde_json::json!({"path": "/bin/codelldb"})));
+        handle.trace_internal(
+            "codelldb_started",
+            Some(serde_json::json!({"path": "/bin/codelldb"})),
+        );
 
         tokio::task::yield_now().await;
 

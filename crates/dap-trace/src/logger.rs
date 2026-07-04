@@ -36,77 +36,77 @@ pub(crate) fn spawn_logger(
     String,
     JoinHandle<()>,
 ) {
-        let (tx, mut rx) = mpsc::unbounded_channel::<TraceEntry>();
-        let ring = Arc::new(RwLock::new(VecDeque::with_capacity(max_ring_size)));
-        let session_id = uuid::Uuid::new_v4().to_string();
+    let (tx, mut rx) = mpsc::unbounded_channel::<TraceEntry>();
+    let ring = Arc::new(RwLock::new(VecDeque::with_capacity(max_ring_size)));
+    let session_id = uuid::Uuid::new_v4().to_string();
 
-        let ring_clone = ring.clone();
-        let sid = session_id.clone();
-        let handle = tokio::spawn(async move {
-            // Open JSONL file if directory is configured
-            let mut file = match &log_dir {
-                Some(dir) => {
-                    if let Err(e) = tokio::fs::create_dir_all(dir).await {
-                        tracing::error!("Failed to create log directory {:?}: {}", dir, e);
-                        None
-                    } else {
-                        let path = dir.join(format!("teledap_{}.jsonl", &sid[..8]));
-                        match OpenOptions::new().create(true).append(true).open(&path).await {
-                            Ok(f) => {
-                                tracing::info!("Trace file: {:?}", path);
-                                Some(f)
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to open trace file {:?}: {}", path, e);
-                                None
-                            }
-                        }
-                    }
-                }
-                None => None,
-            };
-
-            // Consume trace entries until channel closes
-            while let Some(entry) = rx.recv().await {
-                // 1. Push to ring buffer (lock held very briefly)
-                {
-                    let mut buf = ring_clone.write();
-                    if buf.len() >= max_ring_size {
-                        buf.pop_front();
-                    }
-                    buf.push_back(entry.clone());
-                }
-
-                // 2. Append to JSONL file
-                if let Some(ref mut f) = file {
-                    match serde_json::to_string(&entry) {
-                        Ok(mut line) => {
-                            line.push('\n');
-                            if let Err(e) = f.write_all(line.as_bytes()).await {
-                                tracing::error!("Failed to write trace entry: {}", e);
-                                file = None;
-                            }
+    let ring_clone = ring.clone();
+    let sid = session_id.clone();
+    let handle = tokio::spawn(async move {
+        // Open JSONL file if directory is configured
+        let mut file = match &log_dir {
+            Some(dir) => {
+                if let Err(e) = tokio::fs::create_dir_all(dir).await {
+                    tracing::error!("Failed to create log directory {:?}: {}", dir, e);
+                    None
+                } else {
+                    let path = dir.join(format!("teledap_{}.jsonl", &sid[..8]));
+                    match OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&path)
+                        .await
+                    {
+                        Ok(f) => {
+                            tracing::info!("Trace file: {:?}", path);
+                            Some(f)
                         }
                         Err(e) => {
-                            tracing::error!("Failed to serialize trace entry: {}", e);
+                            tracing::error!("Failed to open trace file {:?}: {}", path, e);
+                            None
                         }
                     }
                 }
             }
+            None => None,
+        };
 
-            // Flush on shutdown
-            if let Some(ref mut f) = file {
-                let _ = f.flush().await;
-                tracing::info!("Trace file flushed.");
+        // Consume trace entries until channel closes
+        while let Some(entry) = rx.recv().await {
+            // 1. Push to ring buffer (lock held very briefly)
+            {
+                let mut buf = ring_clone.write();
+                if buf.len() >= max_ring_size {
+                    buf.pop_front();
+                }
+                buf.push_back(entry.clone());
             }
-        });
 
-        (
-            tx,
-            ring,
-            session_id,
-            handle,
-        )
+            // 2. Append to JSONL file
+            if let Some(ref mut f) = file {
+                match serde_json::to_string(&entry) {
+                    Ok(mut line) => {
+                        line.push('\n');
+                        if let Err(e) = f.write_all(line.as_bytes()).await {
+                            tracing::error!("Failed to write trace entry: {}", e);
+                            file = None;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to serialize trace entry: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Flush on shutdown
+        if let Some(ref mut f) = file {
+            let _ = f.flush().await;
+            tracing::info!("Trace file flushed.");
+        }
+    });
+
+    (tx, ring, session_id, handle)
 }
 
 #[cfg(test)]
@@ -168,11 +168,7 @@ mod tests {
         let entries: Vec<_> = std::fs::read_dir(&tmpdir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with("teledap_")
-            })
+            .filter(|e| e.file_name().to_string_lossy().starts_with("teledap_"))
             .collect();
 
         assert_eq!(entries.len(), 1);

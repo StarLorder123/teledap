@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ── Unit tests (fast, always runs) ─────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run unit tests
+        run: cargo test --workspace --lib
+
+  # ── Integration tests (self-skip when codelldb is absent) ─────
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-integration-
+
+      - name: Install codelldb
+        run: |
+          mkdir -p $HOME/.local/bin
+          # Fetch the latest CodeLLDB release metadata
+          RELEASE_JSON=$(curl -sSf https://api.github.com/repos/vadimcn/codelldb/releases/latest)
+          # Find the linux-x64 VSIX download URL
+          VSIX_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url":\s*"\K[^"]*linux-x64\.vsix[^"]*' | head -1)
+          if [ -z "$VSIX_URL" ]; then
+            echo "WARNING: Could not find codelldb linux-x64.vsix in latest release. Integration tests will self-skip."
+            exit 0
+          fi
+          echo "Downloading codelldb from $VSIX_URL"
+          curl -sSfL -o /tmp/codelldb.vsix "$VSIX_URL"
+          unzip -qo /tmp/codelldb.vsix -d /tmp/codelldb-ext
+          # The binary is typically under extension/adapter/codelldb
+          find /tmp/codelldb-ext -name codelldb -type f -exec cp {} $HOME/.local/bin/ \;
+          chmod +x $HOME/.local/bin/codelldb
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Verify codelldb
+        run: |
+          if command -v codelldb &>/dev/null; then
+            echo "codelldb installed at $(which codelldb)"
+            codelldb --version || true
+          else
+            echo "codelldb not found — integration tests will self-skip."
+          fi
+
+      - name: Run all tests (including integration)
+        run: cargo test --workspace
+
+  # ── Lint ──────────────────────────────────────────────────────
+  lint:
+    name: Clippy & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-lint-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings

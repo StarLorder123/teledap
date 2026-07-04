@@ -12,6 +12,7 @@ use std::process;
 
 use clap::Parser;
 use dap_client::DapClient;
+use dap_trace::TraceHandle;
 use dap_types::events::StoppedEventBody;
 use dap_types::requests::*;
 use dap_types::types::{Source, SourceBreakpoint};
@@ -36,6 +37,10 @@ struct Args {
     /// Enable verbose logging.
     #[arg(short, long, default_value = "false")]
     verbose: bool,
+
+    /// Directory for debug trace JSONL output.
+    #[arg(long)]
+    log_dir: Option<String>,
 }
 
 #[tokio::main]
@@ -58,7 +63,10 @@ async fn main() {
     tracing::info!("TeleDAP Phase 1 — DAP protocol verification");
     tracing::info!("Starting codelldb from: {}", args.codelldb_path);
 
-    let client = DapClient::new(4 * 1024 * 1024);
+    // Set up debug trace
+    let log_dir = args.log_dir.map(std::path::PathBuf::from);
+    let (trace, _trace_bg) = TraceHandle::new(log_dir, 10_000);
+    let client = DapClient::with_trace(4 * 1024 * 1024, trace);
 
     // ── 1. Start codelldb ─────────────────────────────────────────
     if let Err(e) = client.start(&args.codelldb_path).await {

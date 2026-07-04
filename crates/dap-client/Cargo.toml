@@ -17,3 +17,4 @@ thiserror.workspace = true
 futures = "0.3"
 dap-types.workspace = true
 dap-codec.workspace = true
+dap-trace.workspace = true

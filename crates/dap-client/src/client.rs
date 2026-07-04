@@ -20,8 +20,10 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use dap_codec::DapCodec;
+use dap_trace::TraceHandle;
 use dap_types::base::{Event, ProtocolMessage, Request, Response};
 use dap_types::requests::DapRequest;
 use futures::StreamExt;
@@ -59,6 +61,9 @@ pub struct DapClient {
 
     /// Maximum allowed frame size for the codec.
     max_frame_size: usize,
+
+    /// Optional trace handle for recording debug session interactions.
+    trace: Option<TraceHandle>,
 }
 
 impl DapClient {
@@ -75,6 +80,25 @@ impl DapClient {
             event_tx,
             event_rx: Mutex::new(event_rx),
             max_frame_size,
+            trace: None,
+        }
+    }
+
+    /// Creates a new `DapClient` with debug session tracing enabled.
+    ///
+    /// When a `TraceHandle` is provided, all DAP requests, responses, and events
+    /// are automatically recorded to the trace.
+    pub fn with_trace(max_frame_size: usize, trace: TraceHandle) -> Self {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        Self {
+            child: Mutex::new(None),
+            stdin: Mutex::new(None),
+            seq: AtomicU64::new(1),
+            pending_requests: Mutex::new(HashMap::new()),
+            event_tx,
+            event_rx: Mutex::new(event_rx),
+            max_frame_size,
+            trace: Some(trace),
         }
     }
 
@@ -123,6 +147,7 @@ impl DapClient {
         let pending_clone = pending.clone();
         let event_tx = self.event_tx.clone();
         let max_frame = self.max_frame_size;
+        let trace_opt = self.trace.clone();
 
         // Spawn background stdout reader
         tokio::spawn(async move {
@@ -132,6 +157,11 @@ impl DapClient {
                     Ok(ProtocolMessage::Response(response)) => {
                         let request_seq = response.request_seq;
                         let mut pending_map = pending_clone.lock().await;
+                        // Trace the response
+                        if let Some(ref t) = trace_opt {
+                            let result = response.body.as_ref().map(|b| b.to_string());
+                            t.trace_response(&response.command, result, None);
+                        }
                         if let Some(sender) = pending_map.remove(&request_seq) {
                             let _ = sender.send(Ok(response));
                         } else {
@@ -147,6 +177,10 @@ impl DapClient {
                             seq = event.seq,
                             "DAP event received"
                         );
+                        // Trace the event (best-effort)
+                        if let Some(ref t) = trace_opt {
+                            t.trace_event(&event.event, event.body.clone());
+                        }
                         // Ignore send error — event channel may be closed during shutdown
                         let _ = event_tx.send(event);
                     }
@@ -168,6 +202,12 @@ impl DapClient {
         *self.child.lock().await = Some(child);
 
         tracing::info!(path = %codelldb_path, "codelldb started");
+        if let Some(ref t) = self.trace {
+            t.trace_internal(
+                "codelldb_started",
+                Some(serde_json::json!({"path": codelldb_path})),
+            );
+        }
         Ok(())
     }
 
@@ -191,10 +231,19 @@ impl DapClient {
     {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst);
 
+        // Serialize arguments once for both the request and the trace
+        let args_value = serde_json::to_value(arguments)?;
+
+        // Trace the outgoing request (clone args_value — cheap for small JSON)
+        let start = Instant::now();
+        if let Some(ref t) = self.trace {
+            t.trace_request(Req::COMMAND, Some(args_value.clone()));
+        }
+
         let request = Request {
             seq,
             command: Req::COMMAND.to_string(),
-            arguments: Some(serde_json::to_value(arguments)?),
+            arguments: Some(args_value),
         };
 
         let msg = ProtocolMessage::Request(request);
@@ -222,8 +271,20 @@ impl DapClient {
         tracing::debug!(command = Req::COMMAND, seq = seq, "DAP request sent");
 
         // Wait for matching response
+        let elapsed = start.elapsed();
         match rx.await {
             Ok(Ok(response)) => {
+                if let Some(ref t) = self.trace {
+                    let result = response
+                        .body
+                        .as_ref()
+                        .map(|b| b.to_string());
+                    t.trace_response(
+                        Req::COMMAND,
+                        result,
+                        Some(elapsed.as_micros() as i64),
+                    );
+                }
                 if !response.success {
                     return Err(DapClientError::request_failed(
                         Req::COMMAND,

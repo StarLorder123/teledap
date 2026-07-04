@@ -15,6 +15,7 @@ clap.workspace = true
 dap-types.workspace = true
 dap-codec.workspace = true
 dap-client.workspace = true
+dap-trace.workspace = true
 
 [workspace]
 resolver = "2"
@@ -23,6 +24,7 @@ members = [
     "crates/dap-types",
     "crates/dap-codec",
     "crates/dap-client",
+    "crates/dap-trace",
 ]
 
 [workspace.package]
@@ -49,7 +51,15 @@ thiserror = "2"
 # --- CLI ---
 clap = { version = "4", features = ["derive"] }
 
+# --- Time ---
+chrono = { version = "0.4", features = ["serde"] }
+
+# --- Utils ---
+uuid = { version = "1", features = ["v4"] }
+parking_lot = "0.12"
+
 # --- Local crates ---
 dap-types = { path = "crates/dap-types" }
 dap-codec = { path = "crates/dap-codec" }
 dap-client = { path = "crates/dap-client" }
+dap-trace = { path = "crates/dap-trace" }

@@ -1,0 +1,17 @@
+[package]
+name = "debug-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Managed debug session with state machine, context-chain assembly, and C++ variable expansion"
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+dap-types.workspace = true
+dap-client.workspace = true
+dap-trace.workspace = true

@@ -16,6 +16,7 @@ dap-types.workspace = true
 dap-codec.workspace = true
 dap-client.workspace = true
 dap-trace.workspace = true
+debug-session.workspace = true
 
 [workspace]
 resolver = "2"
@@ -25,6 +26,7 @@ members = [
     "crates/dap-codec",
     "crates/dap-client",
     "crates/dap-trace",
+    "crates/debug-session",
 ]
 
 [workspace.package]
@@ -63,3 +65,4 @@ dap-types = { path = "crates/dap-types" }
 dap-codec = { path = "crates/dap-codec" }
 dap-client = { path = "crates/dap-client" }
 dap-trace = { path = "crates/dap-trace" }
+debug-session = { path = "crates/debug-session" }

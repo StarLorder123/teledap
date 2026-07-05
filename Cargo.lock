@@ -228,6 +228,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "debug-session"
+version = "0.1.0"
+dependencies = [
+ "dap-client",
+ "dap-trace",
+ "dap-types",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -685,6 +699,7 @@ dependencies = [
  "dap-codec",
  "dap-trace",
  "dap-types",
+ "debug-session",
  "serde_json",
  "tokio",
  "tracing",

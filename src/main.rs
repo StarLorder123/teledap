@@ -1,7 +1,8 @@
 //! TeleDAP — MCP Server for AI-assisted embedded hardware debugging.
 //!
-//! This binary is the Phase 1 verification entry point: it spawns codelldb,
-//! completes the DAP initialize handshake, and demonstrates a basic debug session.
+//! This binary is the Phase 2 verification entry point: it uses `DebugSession`
+//! to drive a managed debug session with state tracking, operation gating,
+//! and context-chain assembly.
 //!
 //! Usage:
 //! ```bash
@@ -13,9 +14,12 @@ use std::process;
 use clap::Parser;
 use dap_client::DapClient;
 use dap_trace::TraceHandle;
-use dap_types::events::StoppedEventBody;
-use dap_types::requests::*;
+use dap_types::events::{ExitedEventBody, OutputEventBody, StoppedEventBody};
+use dap_types::requests::{
+    InitializeRequestArguments, LaunchRequestArguments, SetBreakpointsArguments,
+};
 use dap_types::types::{Source, SourceBreakpoint};
+use debug_session::{DebugSession, SessionState};
 use tracing_subscriber::EnvFilter;
 
 /// TeleDAP — Debug Adapter Protocol client for AI-driven debugging.
@@ -60,24 +64,28 @@ async fn main() {
 
     let args = Args::parse();
 
-    tracing::info!("TeleDAP Phase 1 — DAP protocol verification");
+    tracing::info!("TeleDAP Phase 2 — managed debug session");
     tracing::info!("Starting codelldb from: {}", args.codelldb_path);
 
     // Set up debug trace
     let log_dir = args.log_dir.map(std::path::PathBuf::from);
     let (trace, _trace_bg) = TraceHandle::new(log_dir, 10_000);
-    let client = DapClient::with_trace(4 * 1024 * 1024, trace);
+    let client = DapClient::with_trace(4 * 1024 * 1024, trace.clone());
+    let session = DebugSession::new(client, Some(trace));
 
     // ── 1. Start codelldb ─────────────────────────────────────────
-    if let Err(e) = client.start(&args.codelldb_path).await {
-        tracing::error!("Failed to start codelldb: {}", e);
+    if let Err(e) = session.start(&args.codelldb_path).await {
+        tracing::error!("Failed to start codelldb: {e}");
         process::exit(1);
     }
-    tracing::info!("codelldb process started");
+    tracing::info!(
+        "codelldb process started (state: {:?})",
+        SessionState::Connected
+    );
 
     // ── 2. Initialize handshake ───────────────────────────────────
-    let caps = match client
-        .send_request::<InitializeRequest>(InitializeRequestArguments {
+    let caps = match session
+        .initialize(InitializeRequestArguments {
             adapter_id: Some("codelldb".into()),
             lines_start_at1: Some(true),
             columns_start_at1: Some(true),
@@ -87,11 +95,14 @@ async fn main() {
         .await
     {
         Ok(caps) => {
-            tracing::info!("DAP initialize completed successfully");
+            tracing::info!(
+                "DAP initialize completed successfully (state: {:?})",
+                SessionState::Initialized
+            );
             caps
         }
         Err(e) => {
-            tracing::error!("DAP initialize failed: {}", e);
+            tracing::error!("DAP initialize failed: {e}");
             process::exit(1);
         }
     };
@@ -118,18 +129,22 @@ async fn main() {
     // ── 3. Wait for initialized event ─────────────────────────────
     tracing::info!("Waiting for 'initialized' event...");
     loop {
-        match client.recv_event().await {
+        match session.client().recv_event().await {
             Some(event) => {
-                tracing::info!("Received event: {}", event.event);
+                tracing::debug!("Received event: {}", event.event);
+
+                // Handle state-affecting events
+                let _ = session.handle_event(&event).await;
+
                 if event.event == "initialized" {
                     tracing::info!("Adapter is ready for configuration.");
                     break;
                 }
+
+                // Handle output passthrough events
                 if event.event == "output" {
                     if let Some(body) = &event.body {
-                        if let Ok(output) = serde_json::from_value::<
-                            dap_types::events::OutputEventBody,
-                        >(body.clone())
+                        if let Ok(output) = serde_json::from_value::<OutputEventBody>(body.clone())
                         {
                             tracing::info!("[stdout] {}", output.output.trim_end());
                         }
@@ -154,7 +169,7 @@ async fn main() {
 
         if let Some(ref remote) = args.gdb_remote {
             launch_extra["customLaunchSetupCommands"] =
-                serde_json::json!([{"text": format!("gdb-remote {}", remote)}]);
+                serde_json::json!([{"text": format!("gdb-remote {remote}")}]);
         }
 
         let launch_args = LaunchRequestArguments {
@@ -163,22 +178,22 @@ async fn main() {
             extra: launch_extra,
         };
 
-        match client.send_request::<LaunchRequest>(launch_args).await {
+        match session.launch(launch_args).await {
             Ok(_) => tracing::info!("Launch successful"),
-            Err(e) => tracing::error!("Launch failed: {}", e),
+            Err(e) => tracing::error!("Launch failed: {e}"),
         }
 
         // ── 5. Set breakpoint at main ──────────────────────────────
         tracing::info!("Setting breakpoint at main...");
-        let bp_result = client
-            .send_request::<SetBreakpointsRequest>(SetBreakpointsArguments {
+        let bp_result = session
+            .set_breakpoints(SetBreakpointsArguments {
                 source: Source {
                     name: Some(args.elf_path.clone()),
                     path: Some(args.elf_path.clone()),
                     ..Default::default()
                 },
                 breakpoints: Some(vec![SourceBreakpoint {
-                    line: 0, // Function-name based breakpoints are adapter-specific
+                    line: 0,
                     column: None,
                     condition: None,
                     hit_condition: None,
@@ -202,16 +217,16 @@ async fn main() {
                     );
                 }
             }
-            Err(e) => tracing::error!("setBreakpoints failed: {}", e),
+            Err(e) => tracing::error!("setBreakpoints failed: {e}"),
         }
 
         // ── 6. Configuration done ───────────────────────────────────
-        match client
-            .send_request::<ConfigurationDoneRequest>(NoArguments {})
-            .await
-        {
-            Ok(_) => tracing::info!("Configuration done"),
-            Err(e) => tracing::error!("configurationDone failed: {}", e),
+        match session.configuration_done().await {
+            Ok(_) => tracing::info!(
+                "Configuration done (state: {:?})",
+                session.current_state().await
+            ),
+            Err(e) => tracing::error!("configurationDone failed: {e}"),
         }
     }
 
@@ -219,9 +234,21 @@ async fn main() {
     tracing::info!("Entering event loop (Ctrl+C to exit)...");
 
     loop {
-        match client.recv_event().await {
+        match session.client().recv_event().await {
             Some(event) => {
-                match event.event.as_str() {
+                let event_name = event.event.clone();
+
+                // Let the state machine process this event
+                let handled = match session.handle_event(&event).await {
+                    Ok(h) => h,
+                    Err(e) => {
+                        tracing::error!("Error handling event '{event_name}': {e}");
+                        break;
+                    }
+                };
+
+                // Handle events that the state machine doesn't fully process
+                match event_name.as_str() {
                     "stopped" => {
                         let body: Option<StoppedEventBody> = event
                             .body
@@ -233,92 +260,73 @@ async fn main() {
                             body.as_ref().and_then(|b| b.thread_id)
                         );
 
-                        // Query threads
-                        if let Some(ref b) = body {
-                            if let Some(thread_id) = b.thread_id {
-                                let threads =
-                                    client.send_request::<ThreadsRequest>(NoArguments {}).await;
-                                match threads {
-                                    Ok(resp) => {
-                                        tracing::info!(
-                                            "Threads: {}",
-                                            resp.threads
-                                                .iter()
-                                                .map(|t| format!("#{} {}", t.id, t.name))
-                                                .collect::<Vec<_>>()
-                                                .join(", ")
-                                        );
-                                    }
-                                    Err(e) => tracing::error!("threads failed: {}", e),
-                                }
+                        // Query threads using the session's gated methods
+                        match session.get_threads().await {
+                            Ok(threads) => {
+                                tracing::info!(
+                                    "Threads: {}",
+                                    threads
+                                        .iter()
+                                        .map(|t| format!("#{} {}", t.id, t.name))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                );
 
-                                // Query stack trace
-                                let stack = client
-                                    .send_request::<StackTraceRequest>(StackTraceArguments {
-                                        thread_id,
-                                        start_frame: None,
-                                        levels: Some(10),
-                                        format: None,
-                                    })
-                                    .await;
+                                // Query stack trace for the first thread
+                                if !threads.is_empty() {
+                                    let thread_id = body
+                                        .as_ref()
+                                        .and_then(|b| b.thread_id)
+                                        .unwrap_or(threads[0].id);
 
-                                match stack {
-                                    Ok(resp) => {
-                                        tracing::info!(
-                                            "Stack frames: {} ({} total)",
-                                            resp.stack_frames.len(),
-                                            resp.total_frames.unwrap_or(0)
-                                        );
-                                        for frame in &resp.stack_frames {
-                                            tracing::info!(
-                                                "  #{} {} at {}:{}",
-                                                frame.id,
-                                                frame.name,
-                                                frame
-                                                    .source
-                                                    .as_ref()
-                                                    .and_then(|s| s.path.as_deref())
-                                                    .unwrap_or("?"),
-                                                frame.line
-                                            );
-                                        }
+                                    match session.get_stack_trace(thread_id, None, Some(10)).await {
+                                        Ok(frames) => {
+                                            tracing::info!("Stack frames: {}", frames.len());
+                                            for frame in &frames {
+                                                tracing::info!(
+                                                    "  #{} {} at {}:{}",
+                                                    frame.id,
+                                                    frame.name,
+                                                    frame
+                                                        .source
+                                                        .as_ref()
+                                                        .and_then(|s| s.path.as_deref())
+                                                        .unwrap_or("?"),
+                                                    frame.line
+                                                );
+                                            }
 
-                                        // Query scopes for top frame
-                                        if let Some(top_frame) = resp.stack_frames.first() {
-                                            let scopes = client
-                                                .send_request::<ScopesRequest>(ScopesArguments {
-                                                    frame_id: top_frame.id,
-                                                })
-                                                .await;
-
-                                            match scopes {
-                                                Ok(resp) => {
-                                                    for scope in &resp.scopes {
-                                                        tracing::info!(
-                                                            "  Scope '{}': variablesRef={}, named={}, indexed={}",
-                                                            scope.name,
-                                                            scope.variables_reference,
-                                                            scope.named_variables.unwrap_or(0),
-                                                            scope.indexed_variables.unwrap_or(0),
-                                                        );
+                                            // Query scopes for top frame
+                                            if let Some(top_frame) = frames.first() {
+                                                match session.get_scopes(top_frame.id).await {
+                                                    Ok(scopes) => {
+                                                        for scope in &scopes {
+                                                            tracing::info!(
+                                                                "  Scope '{}': variablesRef={}, named={}, indexed={}",
+                                                                scope.name,
+                                                                scope.variables_reference,
+                                                                scope.named_variables.unwrap_or(0),
+                                                                scope.indexed_variables.unwrap_or(0),
+                                                            );
+                                                        }
                                                     }
-                                                }
-                                                Err(e) => {
-                                                    tracing::error!("scopes failed: {}", e)
+                                                    Err(e) => {
+                                                        tracing::error!("scopes failed: {e}")
+                                                    }
                                                 }
                                             }
                                         }
+                                        Err(e) => tracing::error!("stackTrace failed: {e}"),
                                     }
-                                    Err(e) => tracing::error!("stackTrace failed: {}", e),
                                 }
                             }
+                            Err(e) => tracing::error!("threads failed: {e}"),
                         }
                     }
 
                     "output" => {
                         let body = event.body.as_ref().and_then(|b| {
-                            serde_json::from_value::<dap_types::events::OutputEventBody>(b.clone())
-                                .ok()
+                            serde_json::from_value::<OutputEventBody>(b.clone()).ok()
                         });
                         if let Some(ref b) = body {
                             tracing::info!(
@@ -342,8 +350,7 @@ async fn main() {
 
                     "exited" => {
                         let body = event.body.as_ref().and_then(|b| {
-                            serde_json::from_value::<dap_types::events::ExitedEventBody>(b.clone())
-                                .ok()
+                            serde_json::from_value::<ExitedEventBody>(b.clone()).ok()
                         });
                         tracing::info!(
                             "Debuggee exited with code: {:?}",
@@ -353,8 +360,16 @@ async fn main() {
                     }
 
                     _ => {
-                        tracing::debug!("Event: {} (seq={})", event.event, event.seq);
+                        if !handled {
+                            tracing::debug!("Unhandled event: {event_name} (seq={})", event.seq);
+                        }
                     }
+                }
+
+                // Check if we've been disconnected
+                if session.current_state().await == SessionState::Disconnected {
+                    tracing::info!("Session disconnected.");
+                    break;
                 }
             }
             None => {
@@ -365,9 +380,12 @@ async fn main() {
     }
 
     // ── 8. Shutdown ───────────────────────────────────────────────
-    tracing::info!("Shutting down...");
-    if let Err(e) = client.shutdown().await {
-        tracing::error!("Shutdown error: {}", e);
+    tracing::info!(
+        "Shutting down (state: {:?})...",
+        session.current_state().await
+    );
+    if let Err(e) = session.shutdown().await {
+        tracing::error!("Shutdown error: {e}");
     }
-    tracing::info!("TeleDAP Phase 1 verification complete.");
+    tracing::info!("TeleDAP Phase 2 verification complete.");
 }

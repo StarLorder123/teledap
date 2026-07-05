@@ -26,8 +26,10 @@ use dap_types::{
 use tokio::sync::{watch, RwLock};
 use tracing::{debug, info, warn};
 
+use crate::cache::{VariableHandleCache, VariableHandleEntry};
 use crate::error::DebugSessionError;
 use crate::gating::ToolAvailability;
+use crate::mapping::PathMapper;
 use crate::state::{HaltState, SessionState};
 
 /// A managed debug session with state tracking, operation gating, and event handling.
@@ -57,6 +59,11 @@ pub struct DebugSession {
     trace: Option<TraceHandle>,
     /// Watch channel sender for state change notifications.
     state_tx: watch::Sender<SessionState>,
+    /// Path mapper for AI relative ↔ system absolute path translation.
+    path_mapper: RwLock<PathMapper>,
+    /// Variable handle cache: variable name → variablesReference mapping.
+    /// Auto-invalidated when execution resumes.
+    variable_cache: VariableHandleCache,
 }
 
 impl DebugSession {
@@ -71,6 +78,8 @@ impl DebugSession {
             _configuration_done: RwLock::new(false),
             trace,
             state_tx,
+            path_mapper: RwLock::new(PathMapper::new()),
+            variable_cache: VariableHandleCache::new(),
         }
     }
 
@@ -92,6 +101,84 @@ impl DebugSession {
     /// Returns a clone of the capabilities (if initialized).
     pub async fn capabilities(&self) -> Option<Capabilities> {
         self.capabilities.read().await.clone()
+    }
+
+    // ── Path mapping ──────────────────────────────────────────────────────────
+
+    /// Register a path alias (AI path → system absolute path).
+    ///
+    /// After registration, `resolve_path("src/main.cpp")` will return the
+    /// absolute system path.
+    pub async fn register_path_alias(&self, alias: &str, absolute_path: &str) {
+        self.path_mapper
+            .write()
+            .await
+            .register_alias(alias, absolute_path);
+    }
+
+    /// Register a base directory for relative path resolution.
+    pub async fn register_base_dir(&self, dir: &str) {
+        self.path_mapper.write().await.register_base_dir(dir);
+    }
+
+    /// Resolve a path (potentially relative or aliased) to an absolute system path.
+    pub async fn resolve_path(&self, path: &str) -> Option<String> {
+        self.path_mapper.read().await.resolve(path)
+    }
+
+    /// Reverse-resolve an absolute system path to the most specific registered alias.
+    pub async fn reverse_path(&self, absolute_path: &str) -> Option<String> {
+        self.path_mapper.read().await.reverse(absolute_path)
+    }
+
+    // ── Variable handle cache ─────────────────────────────────────────────────
+
+    /// Returns a reference to the variable handle cache.
+    pub fn variable_cache(&self) -> &VariableHandleCache {
+        &self.variable_cache
+    }
+
+    /// Cache a variable entry (typically called during context assembly).
+    pub async fn cache_variable(&self, entry: VariableHandleEntry) {
+        self.variable_cache.insert(entry).await;
+    }
+
+    /// Look up a variable handle by name, with optional frame/scope scoping.
+    pub async fn lookup_variable(
+        &self,
+        name: &str,
+        frame_id: Option<u64>,
+        scope_name: Option<&str>,
+    ) -> Option<VariableHandleEntry> {
+        self.variable_cache.lookup(name, frame_id, scope_name).await
+    }
+
+    /// Search the variable cache with a fuzzy query.
+    pub async fn search_variables(&self, query: &str, limit: usize) -> Vec<VariableHandleEntry> {
+        self.variable_cache.search(query, limit).await
+    }
+
+    /// Populate the variable cache from a flat list of variables for a given frame/scope.
+    pub async fn cache_variables(
+        &self,
+        variables: &[Variable],
+        frame_id: Option<u64>,
+        scope_name: Option<&str>,
+    ) {
+        let entries: Vec<VariableHandleEntry> = variables
+            .iter()
+            .map(|v| VariableHandleEntry {
+                variables_reference: v.variables_reference,
+                name: v.name.clone(),
+                frame_id,
+                scope_name: scope_name.map(|s| s.to_string()),
+                var_type: v.var_type.clone(),
+                named_variables: v.named_variables,
+                indexed_variables: v.indexed_variables,
+                captured_at: std::time::Instant::now(),
+            })
+            .collect();
+        self.variable_cache.insert_batch(entries).await;
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -126,6 +213,14 @@ impl DebugSession {
 
         let from = *state;
         *state = target;
+
+        // Invalidate variable cache when leaving Halted state
+        // (variable handles are only valid while stopped)
+        if from == SessionState::Halted
+            && (target == SessionState::Running || target == SessionState::Disconnected)
+        {
+            self.variable_cache.invalidate().await;
+        }
 
         // Trace the transition if tracing is enabled
         if let Some(ref t) = self.trace {

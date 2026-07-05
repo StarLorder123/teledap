@@ -7,6 +7,8 @@
 //! - **Operation gating**: every operation validates the current session state
 //! - **Context-chain assembly**: structured snapshot of threads, frames, scopes, variables
 //! - **Variable expansion**: recursive expansion with depth limiting and paging
+//! - **Path mapping**: bidirectional AI relative ↔ system absolute path translation
+//! - **Variable handle cache**: thread-safe variable name → handle mapping with auto-invalidation
 //!
 //! # Example
 //!
@@ -32,17 +34,21 @@
 //! }
 //! ```
 
+pub mod cache;
 pub mod context;
 pub mod error;
 pub mod gating;
+pub mod mapping;
 pub mod session;
 pub mod state;
 pub mod variables;
 
 // Re-export key types for convenience
+pub use cache::{VariableHandleCache, VariableHandleEntry};
 pub use context::{ContextChain, FrameContext, ScopeContext, ThreadContext};
 pub use error::DebugSessionError;
 pub use gating::ToolAvailability;
+pub use mapping::PathMapper;
 pub use session::DebugSession;
 pub use state::{HaltState, SessionState};
 pub use variables::{ExpandedVariable, ExpansionConfig, VariableExpander};

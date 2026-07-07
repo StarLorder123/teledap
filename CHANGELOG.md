@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- MCP protocol layer (`mcp-protocol` crate): JSON-RPC 2.0 types and line-delimited stdio transport for AI client communication
+- MCP tool dispatch (`debug-bridge` crate): 24 MCP tool handlers (lifecycle, execution control, breakpoints, introspection, utilities) bridging AI tool calls to DebugSession operations with state-aware gating
+- MCP server mode: auto-detection via `is_terminal()`, background DAP event handler, `tools/list` returns state-filtered tools, errors returned as `isError: true` per MCP spec
+- Phase 3 test suite: 26 debug-bridge unit tests + 7 integration tests (lifecycle dispatch, state gating, utility tools)
+
+### Changed
+
+- Root binary restructured: existing Phase 2 CLI moved to `src/cli.rs`, new `src/server.rs` for MCP loop, `src/main.rs` performs mode auto-detection
+- Tracing now writes exclusively to stderr (stdout is the MCP protocol channel)
+
 - Complete DAP type system (`dap-types` crate): all 103 spec types including 42 requests, 17 events, and 36 data types with serde support
 - DAP wire-format codec (`dap-codec` crate): tokio Decoder/Encoder for Content-Length framed protocol with sticky-packet handling
 - DAP child-process client (`dap-client` crate): codelldb process management with typed request/response via oneshot channels and event streaming via mpsc

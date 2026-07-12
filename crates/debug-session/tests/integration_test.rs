@@ -430,3 +430,242 @@ async fn test_context_chain_assembly() {
         Err(_) => panic!("Context chain test timed out after 10 seconds"),
     }
 }
+
+/// IT-04: Verify step_over, step_in, and step_out operations in stopped state.
+///
+/// Requires codelldb + an ELF binary. Due to variability across binaries,
+/// step_in and step_out are best-effort (the debuggee may exit before all
+/// steps complete).
+#[tokio::test]
+async fn test_step_operations() {
+    if !codelldb_available() {
+        eprintln!("SKIP: codelldb not found on PATH.");
+        return;
+    }
+
+    let elf_path = match test_elf_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("SKIP: no ELF binary available for step test.");
+            return;
+        }
+    };
+
+    eprintln!("Using ELF: {elf_path}");
+
+    let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
+    let session = DebugSession::new(client, None);
+
+    let result = timeout(Duration::from_secs(10), async {
+        session.start("codelldb").await?;
+
+        session
+            .initialize(InitializeRequestArguments {
+                adapter_id: Some("codelldb".into()),
+                client_name: Some("teledap-step-test".into()),
+                ..Default::default()
+            })
+            .await?;
+
+        session
+            .launch(LaunchRequestArguments::with_program(&elf_path))
+            .await?;
+
+        // Event loop: wait for initialized, send configurationDone,
+        // then wait for the first stopped event.
+        let mut configured = false;
+        let mut stopped = false;
+        while let Some(event) = session.client().recv_event().await {
+            let event_name = event.event.clone();
+            let _ = session.handle_event(&event).await?;
+
+            if event_name == "initialized" && !configured {
+                session.configuration_done().await?;
+                configured = true;
+            }
+
+            if event_name == "stopped" {
+                stopped = true;
+                break;
+            }
+
+            if event_name == "terminated" || event_name == "exited" {
+                eprintln!("Debuggee exited before first stop — step test cannot run.");
+                break;
+            }
+        }
+
+        if !stopped {
+            return Ok(());
+        }
+
+        assert_eq!(
+            session.current_state().await,
+            SessionState::Halted,
+            "Should be Halted after stopped event"
+        );
+
+        let threads = session.get_threads().await?;
+        assert!(!threads.is_empty(), "Should have at least one thread");
+        let tid = threads[0].id;
+        eprintln!("Thread ID for stepping: {tid}");
+
+        // -- step_over --
+        session.step_over(tid, None).await?;
+        let mut re_stopped = false;
+        while let Some(event) = session.client().recv_event().await {
+            let _ = session.handle_event(&event).await?;
+            let en = event.event.as_str();
+            if en == "stopped" {
+                re_stopped = true;
+                break;
+            }
+            if en == "terminated" || en == "exited" {
+                break;
+            }
+        }
+        eprintln!(
+            "step_over: {}",
+            if re_stopped { "OK" } else { "program exited" }
+        );
+
+        // -- step_in (best-effort) --
+        if re_stopped {
+            let _ = session.step_in(tid, None, None).await;
+            while let Some(event) = session.client().recv_event().await {
+                let _ = session.handle_event(&event).await?;
+                let en = event.event.as_str();
+                if en == "stopped" || en == "terminated" || en == "exited" {
+                    eprintln!(
+                        "step_in: {}",
+                        if en == "stopped" {
+                            "OK"
+                        } else {
+                            "program exited"
+                        }
+                    );
+                    break;
+                }
+            }
+        }
+
+        // -- step_out (best-effort) --
+        if session.current_state().await == SessionState::Halted {
+            let _ = session.step_out(tid, None).await;
+            while let Some(event) = session.client().recv_event().await {
+                let _ = session.handle_event(&event).await?;
+                let en = event.event.as_str();
+                if en == "stopped" || en == "terminated" || en == "exited" {
+                    eprintln!(
+                        "step_out: {}",
+                        if en == "stopped" {
+                            "OK"
+                        } else {
+                            "program exited"
+                        }
+                    );
+                    break;
+                }
+            }
+        }
+
+        eprintln!("Step operations test complete.");
+        Ok::<_, DebugSessionError>(())
+    })
+    .await;
+
+    let _ = session.shutdown().await;
+
+    match result {
+        Ok(Ok(())) => { /* success */ }
+        Ok(Err(e)) => panic!("Step operations test failed: {e}"),
+        Err(_) => panic!("Step operations test timed out after 10 seconds"),
+    }
+}
+
+/// IT-08: Launch a short-lived program and verify that terminated/exited
+/// events transition the session to Disconnected.
+///
+/// The session's handle_event method should call client.shutdown() and
+/// transition to Disconnected on both terminated and exited events.
+#[tokio::test]
+async fn test_program_exit_handling() {
+    if !codelldb_available() {
+        eprintln!("SKIP: codelldb not found on PATH.");
+        return;
+    }
+
+    let elf_path = match test_elf_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("SKIP: no ELF binary available for exit test.");
+            return;
+        }
+    };
+
+    eprintln!("Using ELF: {elf_path}");
+
+    let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
+    let session = DebugSession::new(client, None);
+
+    let result = timeout(Duration::from_secs(10), async {
+        session.start("codelldb").await?;
+
+        session
+            .initialize(InitializeRequestArguments {
+                adapter_id: Some("codelldb".into()),
+                client_name: Some("teledap-exit-test".into()),
+                ..Default::default()
+            })
+            .await?;
+
+        session
+            .launch(LaunchRequestArguments::with_program(&elf_path))
+            .await?;
+
+        let mut configured = false;
+        let mut exit_seen = false;
+
+        // Event loop: wait for terminated or exited
+        while let Some(event) = session.client().recv_event().await {
+            let event_name = event.event.clone();
+            let _ = session.handle_event(&event).await?;
+
+            if event_name == "initialized" && !configured {
+                session.configuration_done().await?;
+                configured = true;
+            }
+
+            if event_name == "terminated" || event_name == "exited" {
+                eprintln!("Debuggee {event_name} received.");
+                exit_seen = true;
+                break;
+            }
+        }
+
+        if !exit_seen {
+            // The channel may have closed before we saw the event
+            eprintln!("No terminated/exited event seen via recv_event (channel may have closed).");
+        }
+
+        // The session should be Disconnected regardless of event path
+        let final_state = session.current_state().await;
+        eprintln!("Final session state: {final_state}");
+        assert_eq!(
+            final_state,
+            SessionState::Disconnected,
+            "Session should be Disconnected after program exit"
+        );
+
+        Ok::<_, DebugSessionError>(())
+    })
+    .await;
+
+    let _ = session.shutdown().await;
+
+    match result {
+        Ok(Ok(())) => { /* success */ }
+        Ok(Err(e)) => panic!("Program exit test failed: {e}"),
+        Err(_) => panic!("Program exit test timed out after 10 seconds"),
+    }
+}

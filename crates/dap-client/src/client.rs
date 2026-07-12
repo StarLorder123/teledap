@@ -51,7 +51,8 @@ pub struct DapClient {
     seq: AtomicU64,
 
     /// Pending request waiters, keyed by request `seq`.
-    pending_requests: Mutex<HashMap<u64, oneshot::Sender<Result<Response, DapClientError>>>>,
+    /// Shared via Arc so the background reader task and `send_request()` use the same map.
+    pending_requests: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Response, DapClientError>>>>>,
 
     /// Sender side of the event channel (background reader → consumers).
     event_tx: mpsc::UnboundedSender<Event>,
@@ -76,7 +77,7 @@ impl DapClient {
             child: Mutex::new(None),
             stdin: Mutex::new(None),
             seq: AtomicU64::new(1),
-            pending_requests: Mutex::new(HashMap::new()),
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
             event_tx,
             event_rx: Mutex::new(event_rx),
             max_frame_size,
@@ -94,7 +95,7 @@ impl DapClient {
             child: Mutex::new(None),
             stdin: Mutex::new(None),
             seq: AtomicU64::new(1),
-            pending_requests: Mutex::new(HashMap::new()),
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
             event_tx,
             event_rx: Mutex::new(event_rx),
             max_frame_size,
@@ -139,12 +140,8 @@ impl DapClient {
             .take()
             .ok_or_else(|| DapClientError::SpawnFailed("codelldb stdin is not available".into()))?;
 
-        // Clone what the background reader task needs
-        let pending = Arc::new(Mutex::new(HashMap::<
-            u64,
-            oneshot::Sender<Result<Response, DapClientError>>,
-        >::new()));
-        let pending_clone = pending.clone();
+        // Share the pending_requests map with the background reader task
+        let pending_clone = self.pending_requests.clone();
         let event_tx = self.event_tx.clone();
         let max_frame = self.max_frame_size;
         let trace_opt = self.trace.clone();

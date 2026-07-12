@@ -4,12 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- E2E test scripts enhanced: 7-phase MCP dispatch verification (22 assertions) covering pre-init rejection, state-aware tool listing, error paths, and codelldb lifecycle; bash subshell bug fixed
+
 ### Added
 
-- MCP protocol layer (`mcp-protocol` crate): JSON-RPC 2.0 types and line-delimited stdio transport for AI client communication
-- MCP tool dispatch (`debug-bridge` crate): 24 MCP tool handlers (lifecycle, execution control, breakpoints, introspection, utilities) bridging AI tool calls to DebugSession operations with state-aware gating
-- MCP server mode: auto-detection via `is_terminal()`, background DAP event handler, `tools/list` returns state-filtered tools, errors returned as `isError: true` per MCP spec
-- Phase 3 test suite: 26 debug-bridge unit tests + 7 integration tests (lifecycle dispatch, state gating, utility tools)
+- CLI `--source-path` and `--breakpoints` arguments: set breakpoints with real source file paths and line numbers instead of `line: 0`/elf_path placeholder
+- Variable inspection in CLI `stopped` event handler: fetches and logs local variables with name, value, and type after scopes
+- `continue_execution()` after breakpoint inspection in CLI mode: program resumes automatically after each stop, allowing multiple breakpoint hits and clean exit
+- Stack backtrace display: 5-6 frame call chain (user function → system CRT) logged per breakpoint hit
+- Source path auto-inference: if `--source-path` not provided, looks for `main.c` in the ELF binary's directory
+
+### Fixed
+
+- `ScopesArguments`, `ScopesResponse`, `VariablesResponse` in `dap-types` were missing `#[serde(rename_all = "camelCase")]`, causing `frame_id` to serialize as `frame_id` instead of DAP spec's `frameId`. codelldb rejected scopes requests with "Malformed message".
+- CLI shutdown error when already Disconnected: `exited` event transitions to Disconnected before shutdown runs. Fixed by checking state before calling shutdown.
+
+### Added
+
+- Integration tests for dap-client: duplicate start rejection (CL-I06), send_request_nb fire-and-forget (CL-I07)
+- Integration tests for debug-session: step operations (IT-04), program exit handling (IT-08)
+- Unit test for dap-codec: non-numeric Content-Length rejection (DC-17)
+- Unit test for dap-types: all 42 DAP request COMMAND constants must be non-empty
+- Unit tests for CLI Args parsing (defaults, path, remote, flags)
+- MCP E2E test scripts (`test_mcp_e2e.ps1`, `test_mcp_e2e.sh`) for CI/local smoke testing
+- `--cli` flag to force CLI mode when stdin is not a terminal (e.g. PowerShell). Mode detection now checks `--cli` before falling back to `is_terminal()`.
 
 ### Changed
 
@@ -28,6 +46,11 @@ All notable changes to this project will be documented in this file.
 - Path mapping (`mapping.rs`): bidirectional AI relative ↔ system absolute path translation with alias registration, base directory fallback, and longest-match prefix resolution
 - Variable handle cache (`cache.rs`): thread-safe name → variablesReference mapping with scoped lookups (frame+scope priority), fuzzy search, and automatic invalidation on state transitions
 
+### Fixed
+
+- Duplicate tracing subscriber initialization causing panic in CLI mode: `main.rs` already sets up the global subscriber before dispatching to `cli::run()`, so the second `.init()` in `cli.rs` was removed
+
 ### Documentation
 
 - CLAUDE.md: project architecture guide, key design patterns (wire protocol, oneshot dispatch, DapRequest trait), build/test/lint commands, and testing conventions
+- PC 端调试通信测试报告 (`docs/测试报告.md`): 完整记录 4 个 Bug 的根因分析与修复、端到端测试步骤与结果

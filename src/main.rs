@@ -15,8 +15,10 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
-    // Detect mode: pipe → MCP, terminal → CLI
-    let is_mcp = !std::io::stdin().is_terminal();
+    // Detect mode: --cli flag forces CLI, pipe → MCP, terminal → CLI
+    let args: Vec<String> = std::env::args().collect();
+    let force_cli = args.iter().any(|a| a == "--cli");
+    let is_mcp = !force_cli && !std::io::stdin().is_terminal();
 
     // Tracing always goes to stderr (stdout is the MCP protocol channel)
     let filter = if is_mcp {

@@ -580,8 +580,12 @@ impl DebugSession {
 
                 self.halt_state.write().await.clear();
                 info!(thread_id = body.thread_id, "Debuggee continued");
-                self.transition_to(SessionState::Running, "event:continued")
-                    .await?;
+                // If already Running (e.g. after configurationDone → Running,
+                // then the debuggee continues automatically), skip transition.
+                if *self.state.read().await != SessionState::Running {
+                    self.transition_to(SessionState::Running, "event:continued")
+                        .await?;
+                }
                 Ok(true)
             }
             "terminated" => {

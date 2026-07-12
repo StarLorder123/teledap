@@ -1244,4 +1244,77 @@ mod tests {
         assert_eq!(resp.var_type.as_deref(), Some("int"));
         assert_eq!(resp.variables_reference, 0);
     }
+
+    /// Verify that all 42 DAP request types have a non-empty COMMAND constant.
+    ///
+    /// The COMMAND string is sent as the `command` field in the DAP request
+    /// message; an empty string would produce an invalid protocol message.
+    /// This test also serves as a catalogue of every request type.
+    #[test]
+    fn test_all_42_commands_non_empty() {
+        let commands: &[(&str, &str)] = &[
+            ("initialize", InitializeRequest::COMMAND),
+            ("launch", LaunchRequest::COMMAND),
+            ("attach", AttachRequest::COMMAND),
+            ("restart", RestartRequest::COMMAND),
+            ("disconnect", DisconnectRequest::COMMAND),
+            ("terminate", TerminateRequest::COMMAND),
+            ("configurationDone", ConfigurationDoneRequest::COMMAND),
+            ("setBreakpoints", SetBreakpointsRequest::COMMAND),
+            (
+                "setFunctionBreakpoints",
+                SetFunctionBreakpointsRequest::COMMAND,
+            ),
+            (
+                "setExceptionBreakpoints",
+                SetExceptionBreakpointsRequest::COMMAND,
+            ),
+            ("setDataBreakpoints", SetDataBreakpointsRequest::COMMAND),
+            (
+                "setInstructionBreakpoints",
+                SetInstructionBreakpointsRequest::COMMAND,
+            ),
+            ("breakpointLocations", BreakpointLocationsRequest::COMMAND),
+            ("dataBreakpointInfo", DataBreakpointInfoRequest::COMMAND),
+            ("continue", ContinueRequest::COMMAND),
+            ("next", NextRequest::COMMAND),
+            ("stepIn", StepInRequest::COMMAND),
+            ("stepOut", StepOutRequest::COMMAND),
+            ("stepBack", StepBackRequest::COMMAND),
+            ("reverseContinue", ReverseContinueRequest::COMMAND),
+            ("restartFrame", RestartFrameRequest::COMMAND),
+            ("goto", GotoRequest::COMMAND),
+            ("pause", PauseRequest::COMMAND),
+            ("stackTrace", StackTraceRequest::COMMAND),
+            ("scopes", ScopesRequest::COMMAND),
+            ("variables", VariablesRequest::COMMAND),
+            ("setVariable", SetVariableRequest::COMMAND),
+            ("source", SourceRequest::COMMAND),
+            ("threads", ThreadsRequest::COMMAND),
+            ("terminateThreads", TerminateThreadsRequest::COMMAND),
+            ("modules", ModulesRequest::COMMAND),
+            ("loadedSources", LoadedSourcesRequest::COMMAND),
+            ("evaluate", EvaluateRequest::COMMAND),
+            ("setExpression", SetExpressionRequest::COMMAND),
+            ("stepInTargets", StepInTargetsRequest::COMMAND),
+            ("gotoTargets", GotoTargetsRequest::COMMAND),
+            ("completions", CompletionsRequest::COMMAND),
+            ("exceptionInfo", ExceptionInfoRequest::COMMAND),
+            ("readMemory", ReadMemoryRequest::COMMAND),
+            ("writeMemory", WriteMemoryRequest::COMMAND),
+            ("disassemble", DisassembleRequest::COMMAND),
+            ("locations", LocationsRequest::COMMAND),
+        ];
+
+        assert_eq!(
+            commands.len(),
+            42,
+            "Should have exactly 42 request types, found {}",
+            commands.len()
+        );
+
+        for (name, cmd) in commands {
+            assert!(!cmd.is_empty(), "{name}::COMMAND should not be empty");
+        }
+    }
 }

@@ -65,10 +65,20 @@ pub async fn handle_initialize(
         })?;
 
     let args = InitializeRequestArguments {
-        adapter_id: p.adapter_id.or_else(|| Some("codelldb".into())),
+        client_id: Some("teledap".into()),
+        client_name: Some("TeleDAP".into()),
+        adapter_id: p.adapter_id.or_else(|| Some("lldb".into())),
+        locale: Some("en-US".into()),
         lines_start_at1: Some(true),
         columns_start_at1: Some(true),
         path_format: Some("path".into()),
+        supports_variable_type: Some(true),
+        supports_variable_paging: Some(false),
+        supports_run_in_terminal_request: Some(false),
+        supports_memory_references: Some(true),
+        supports_progress_reporting: Some(true),
+        supports_invalidated_event: Some(true),
+        supports_memory_event: Some(true),
         ..Default::default()
     };
 

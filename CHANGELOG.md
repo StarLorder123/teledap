@@ -11,6 +11,20 @@ All notable changes to this project will be documented in this file.
 - MCP server mode: auto-detection via `is_terminal()`, background DAP event handler, `tools/list` returns state-filtered tools, errors returned as `isError: true` per MCP spec
 - Phase 3 test suite: 26 debug-bridge unit tests + 7 integration tests (lifecycle dispatch, state gating, utility tools)
 
+### Fixed
+
+- Race condition in `DapClient`: `start()` created a separate pending-requests map for the background reader task, so responses could never be matched to their waiters. Fixed by sharing `pending_requests` via `Arc<Mutex<HashMap>>` between `start()` and `send_request()`.
+- codelldb rejecting initialize request with "Malformed message": added complete VS Code-standard `InitializeRequestArguments` fields (`clientID`, `clientName`, `locale`, `supports*`) and corrected `adapterID` from `"codelldb"` to `"lldb"`.
+
+### Added
+
+- Integration tests for dap-client: duplicate start rejection (CL-I06), send_request_nb fire-and-forget (CL-I07)
+- Integration tests for debug-session: step operations (IT-04), program exit handling (IT-08)
+- Unit test for dap-codec: non-numeric Content-Length rejection (DC-17)
+- Unit test for dap-types: all 42 DAP request COMMAND constants must be non-empty
+- Unit tests for CLI Args parsing (defaults, path, remote, flags)
+- MCP E2E test scripts (`test_mcp_e2e.ps1`, `test_mcp_e2e.sh`) for CI/local smoke testing
+
 ### Changed
 
 - Root binary restructured: existing Phase 2 CLI moved to `src/cli.rs`, new `src/server.rs` for MCP loop, `src/main.rs` performs mode auto-detection

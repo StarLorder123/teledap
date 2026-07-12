@@ -479,4 +479,28 @@ mod tests {
         );
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
     }
+
+    /// DC-17: Non-numeric Content-Length value should be rejected.
+    ///
+    /// When the Content-Length header contains a non-numeric value (e.g. "abc"),
+    /// the `parse::<usize>()` returns `None`, which triggers an `InvalidData` error.
+    #[test]
+    fn test_non_numeric_content_length() {
+        let wire = b"Content-Length: abc\r\n\r\n{}";
+        let mut buf = BytesMut::from(&wire[..]);
+        let mut codec = make_codec();
+
+        let result = codec.decode(&mut buf);
+        assert!(
+            result.is_err(),
+            "Non-numeric Content-Length should produce an error"
+        );
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::InvalidData,
+            "Expected InvalidData, got: {:?}",
+            err.kind()
+        );
+    }
 }

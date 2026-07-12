@@ -263,3 +263,95 @@ async fn test_integration_full_lifecycle() {
         Err(_) => panic!("Full lifecycle test timed out after 2 seconds"),
     }
 }
+
+/// CL-I06: Verify that calling start() a second time is rejected.
+///
+/// The client must guard against double-start because spawning a second
+/// codelldb process while one is already running would leak the first process.
+#[tokio::test]
+async fn test_integration_duplicate_start_rejection() {
+    if !codelldb_available() {
+        eprintln!("SKIP: codelldb not found on PATH.");
+        return;
+    }
+
+    let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
+
+    let result = timeout(Duration::from_secs(2), async {
+        // First start succeeds
+        client.start("codelldb").await?;
+        assert!(
+            client.is_running().await,
+            "Client should be running after first start"
+        );
+
+        // Second start must fail with SpawnFailed
+        let err = client.start("codelldb").await.unwrap_err();
+        assert!(
+            matches!(err, DapClientError::SpawnFailed(_)),
+            "Expected SpawnFailed, got: {:?}",
+            err
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("already running"),
+            "Error message should mention 'already running': {}",
+            msg
+        );
+
+        Ok::<_, DapClientError>(())
+    })
+    .await;
+
+    let _ = client.shutdown().await;
+
+    match result {
+        Ok(Ok(())) => { /* success */ }
+        Ok(Err(e)) => panic!("Duplicate start rejection test failed: {e}"),
+        Err(_elapsed) => panic!("Duplicate start rejection test timed out after 2 seconds"),
+    }
+}
+
+/// CL-I07: Verify that send_request_nb sends a request without blocking.
+///
+/// The non-blocking send is important for fire-and-forget requests like
+/// `configurationDone` where the response has no meaningful body, and we
+/// don't want to waste a oneshot channel.
+#[tokio::test]
+async fn test_integration_send_request_nb() {
+    if !codelldb_available() {
+        eprintln!("SKIP: codelldb not found on PATH.");
+        return;
+    }
+
+    let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
+
+    let result = timeout(Duration::from_secs(2), async {
+        client.start("codelldb").await?;
+
+        // Initialize first so the adapter is ready to accept configurationDone
+        let _caps = client
+            .send_request::<InitializeRequest>(InitializeRequestArguments {
+                adapter_id: Some("codelldb".into()),
+                client_name: Some("teledap-nb-test".into()),
+                ..Default::default()
+            })
+            .await?;
+
+        // send_request_nb should return Ok(()) immediately without blocking
+        client
+            .send_request_nb::<ConfigurationDoneRequest>(NoArguments {})
+            .await?;
+
+        Ok::<_, DapClientError>(())
+    })
+    .await;
+
+    let _ = client.shutdown().await;
+
+    match result {
+        Ok(Ok(())) => { /* success */ }
+        Ok(Err(e)) => panic!("send_request_nb test failed: {e}"),
+        Err(_elapsed) => panic!("send_request_nb test timed out after 2 seconds"),
+    }
+}

@@ -70,10 +70,20 @@ pub async fn run() {
     // ── 2. Initialize handshake ───────────────────────────────────
     let caps = match session
         .initialize(InitializeRequestArguments {
-            adapter_id: Some("codelldb".into()),
+            client_id: Some("teledap".into()),
+            client_name: Some("TeleDAP".into()),
+            adapter_id: Some("lldb".into()),
+            locale: Some("en-US".into()),
             lines_start_at1: Some(true),
             columns_start_at1: Some(true),
             path_format: Some("path".into()),
+            supports_variable_type: Some(true),
+            supports_variable_paging: Some(false),
+            supports_run_in_terminal_request: Some(false),
+            supports_memory_references: Some(true),
+            supports_progress_reporting: Some(true),
+            supports_invalidated_event: Some(true),
+            supports_memory_event: Some(true),
             ..Default::default()
         })
         .await
@@ -372,4 +382,53 @@ pub async fn run() {
         tracing::error!("Shutdown error: {e}");
     }
     tracing::info!("TeleDAP Phase 2 verification complete.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_default_args() {
+        let args = Args::try_parse_from(["teledap"]).unwrap();
+        assert_eq!(args.codelldb_path, "codelldb");
+        assert_eq!(args.elf_path, "");
+        assert!(args.gdb_remote.is_none());
+        assert!(!args.verbose);
+        assert!(args.log_dir.is_none());
+    }
+
+    #[test]
+    fn test_custom_codelldb_path() {
+        let args =
+            Args::try_parse_from(["teledap", "--codelldb-path", "/usr/bin/codelldb"]).unwrap();
+        assert_eq!(args.codelldb_path, "/usr/bin/codelldb");
+    }
+
+    #[test]
+    fn test_elf_and_gdb_remote() {
+        let args = Args::try_parse_from([
+            "teledap",
+            "--elf-path",
+            "app.elf",
+            "--gdb-remote",
+            "localhost:3333",
+        ])
+        .unwrap();
+        assert_eq!(args.elf_path, "app.elf");
+        assert_eq!(args.gdb_remote.as_deref(), Some("localhost:3333"));
+    }
+
+    #[test]
+    fn test_verbose_flag() {
+        let args = Args::try_parse_from(["teledap", "-v"]).unwrap();
+        assert!(args.verbose);
+    }
+
+    #[test]
+    fn test_log_dir() {
+        let args = Args::try_parse_from(["teledap", "--log-dir", "./traces"]).unwrap();
+        assert_eq!(args.log_dir.as_deref(), Some("./traces"));
+    }
 }

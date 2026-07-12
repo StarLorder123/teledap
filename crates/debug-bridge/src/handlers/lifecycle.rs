@@ -124,8 +124,7 @@ pub async fn handle_launch(
     });
 
     if let Some(ref remote) = p.gdb_remote {
-        launch_extra["customLaunchSetupCommands"] =
-            serde_json::json!([{"text": format!("gdb-remote {remote}")}]);
+        launch_extra["processCreateCommands"] = serde_json::json!([format!("gdb-remote {remote}")]);
     }
     if let Some(ref cargs) = p.args {
         launch_extra["args"] = serde_json::json!(cargs);

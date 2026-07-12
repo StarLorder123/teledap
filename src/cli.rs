@@ -36,6 +36,10 @@ struct Args {
     #[arg(long)]
     gdb_remote: Option<String>,
 
+    /// Force CLI mode (skips stdin terminal detection).
+    #[arg(long, default_value = "false")]
+    cli: bool,
+
     /// Enable verbose logging.
     #[arg(short, long, default_value = "false")]
     verbose: bool,
@@ -120,39 +124,10 @@ pub async fn run() {
     );
     tracing::info!("  Step back: {:?}", caps.supports_step_back);
 
-    // ── 3. Wait for initialized event ─────────────────────────────
-    tracing::info!("Waiting for 'initialized' event...");
-    loop {
-        match session.client().recv_event().await {
-            Some(event) => {
-                tracing::debug!("Received event: {}", event.event);
-
-                // Handle state-affecting events
-                let _ = session.handle_event(&event).await;
-
-                if event.event == "initialized" {
-                    tracing::info!("Adapter is ready for configuration.");
-                    break;
-                }
-
-                // Handle output passthrough events
-                if event.event == "output" {
-                    if let Some(body) = &event.body {
-                        if let Ok(output) = serde_json::from_value::<OutputEventBody>(body.clone())
-                        {
-                            tracing::info!("[stdout] {}", output.output.trim_end());
-                        }
-                    }
-                }
-            }
-            None => {
-                tracing::error!("Event stream closed before initialized event");
-                process::exit(1);
-            }
-        }
-    }
-
-    // ── 4. Launch debuggee (if elf_path provided) ──────────────────
+    // ── 3. Launch debuggee (if elf_path provided) ──────────────────
+    // Note: codelldb sends the `initialized` event during launch request
+    // processing, so we must send launch first (fire-and-forget), then wait
+    // for the initialized event.
     if !args.elf_path.is_empty() {
         tracing::info!("Launching debuggee: {}", args.elf_path);
 
@@ -162,8 +137,8 @@ pub async fn run() {
         });
 
         if let Some(ref remote) = args.gdb_remote {
-            launch_extra["customLaunchSetupCommands"] =
-                serde_json::json!([{"text": format!("gdb-remote {remote}")}]);
+            launch_extra["processCreateCommands"] =
+                serde_json::json!([format!("gdb-remote {remote}")]);
         }
 
         let launch_args = LaunchRequestArguments {
@@ -172,9 +147,54 @@ pub async fn run() {
             extra: launch_extra,
         };
 
-        match session.launch(launch_args).await {
-            Ok(_) => tracing::info!("Launch successful"),
-            Err(e) => tracing::error!("Launch failed: {e}"),
+        // Verify state before sending launch (must be in Initialized)
+        let state = session.current_state().await;
+        if !debug_session::ToolAvailability::is_allowed("launch", state) {
+            tracing::error!(
+                "Cannot launch in state {:?}; expected Initialized",
+                state
+            );
+            process::exit(1);
+        }
+
+        session
+            .client()
+            .send_request_nb::<dap_types::requests::LaunchRequest>(launch_args)
+            .await
+            .unwrap_or_else(|e| tracing::error!("Launch send failed: {e}"));
+        tracing::info!("Launch request sent (non-blocking).");
+
+        // ── 4. Wait for initialized event ─────────────────────────────
+        tracing::info!("Waiting for 'initialized' event...");
+        loop {
+            match session.client().recv_event().await {
+                Some(event) => {
+                    tracing::debug!("Received event: {}", event.event);
+
+                    // Handle state-affecting events
+                    let _ = session.handle_event(&event).await;
+
+                    if event.event == "initialized" {
+                        tracing::info!("Adapter is ready for configuration.");
+                        break;
+                    }
+
+                    // Handle output passthrough events
+                    if event.event == "output" {
+                        if let Some(body) = &event.body {
+                            if let Ok(output) =
+                                serde_json::from_value::<OutputEventBody>(body.clone())
+                            {
+                                tracing::info!("[stdout] {}", output.output.trim_end());
+                            }
+                        }
+                    }
+                }
+                None => {
+                    tracing::error!("Event stream closed before initialized event");
+                    process::exit(1);
+                }
+            }
         }
 
         // ── 5. Set breakpoint at main ──────────────────────────────
@@ -374,12 +394,12 @@ pub async fn run() {
     }
 
     // ── 8. Shutdown ───────────────────────────────────────────────
-    tracing::info!(
-        "Shutting down (state: {:?})...",
-        session.current_state().await
-    );
-    if let Err(e) = session.shutdown().await {
-        tracing::error!("Shutdown error: {e}");
+    let state = session.current_state().await;
+    tracing::info!("Shutting down (state: {:?})...", state);
+    if state != SessionState::Disconnected {
+        if let Err(e) = session.shutdown().await {
+            tracing::error!("Shutdown error: {e}");
+        }
     }
     tracing::info!("TeleDAP Phase 2 verification complete.");
 }

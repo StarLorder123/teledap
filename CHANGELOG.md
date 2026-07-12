@@ -14,7 +14,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Race condition in `DapClient`: `start()` created a separate pending-requests map for the background reader task, so responses could never be matched to their waiters. Fixed by sharing `pending_requests` via `Arc<Mutex<HashMap>>` between `start()` and `send_request()`.
-- codelldb rejecting initialize request with "Malformed message": added complete VS Code-standard `InitializeRequestArguments` fields (`clientID`, `clientName`, `locale`, `supports*`) and corrected `adapterID` from `"codelldb"` to `"lldb"`.
+- codelldb rejecting initialize request with "Malformed message": `adapterID`/`clientID` fields were serialized as `adapterId`/`clientId` (serde camelCase default) instead of DAP spec's uppercase `ID` suffix. Fixed with explicit `#[serde(rename)]` annotations. `adapterID` is a required field per DAP spec.
+- GDB remote debugging completely broken: `customLaunchSetupCommands` field was silently ignored by codelldb (field does not exist). Fixed by using codelldb's actual `processCreateCommands` field with correct `Vec<String>` format instead of `[{"text": "..."}]`.
+- CLI event flow deadlock: waited for `initialized` event before sending `launch`, but codelldb sends `initialized` only during `launch` processing. Fixed by sending launch first (fire-and-forget via `send_request_nb`), then awaiting the event.
+- `continued` event error when already in Running state: `configurationDone` transitions to Running, then the subsequent `continued` event tried to transition Running→Running (illegal). Fixed by skipping the transition if already Running.
+- CLI shutdown error when already Disconnected: `exited` event transitions to Disconnected before shutdown runs. Fixed by checking state before calling shutdown.
 
 ### Added
 
@@ -24,6 +28,7 @@ All notable changes to this project will be documented in this file.
 - Unit test for dap-types: all 42 DAP request COMMAND constants must be non-empty
 - Unit tests for CLI Args parsing (defaults, path, remote, flags)
 - MCP E2E test scripts (`test_mcp_e2e.ps1`, `test_mcp_e2e.sh`) for CI/local smoke testing
+- `--cli` flag to force CLI mode when stdin is not a terminal (e.g. PowerShell). Mode detection now checks `--cli` before falling back to `is_terminal()`.
 
 ### Changed
 
@@ -49,3 +54,4 @@ All notable changes to this project will be documented in this file.
 ### Documentation
 
 - CLAUDE.md: project architecture guide, key design patterns (wire protocol, oneshot dispatch, DapRequest trait), build/test/lint commands, and testing conventions
+- PC 端调试通信测试报告 (`docs/测试报告.md`): 完整记录 4 个 Bug 的根因分析与修复、端到端测试步骤与结果

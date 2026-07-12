@@ -52,13 +52,15 @@ impl DapRequest for InitializeRequest {
 #[serde(rename_all = "camelCase")]
 pub struct InitializeRequestArguments {
     /// ID of the client (e.g. "vscode").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// DAP spec uses "clientID" (uppercase ID), not "clientId" (camelCase default).
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "clientID")]
     pub client_id: Option<String>,
     /// Human-readable name of the client.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_name: Option<String>,
     /// ID of the debug adapter.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// DAP spec uses "adapterID" (uppercase ID), required field.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "adapterID")]
     pub adapter_id: Option<String>,
     /// ISO-639 locale (e.g. "en-US").
     #[serde(default, skip_serializing_if = "Option::is_none")]

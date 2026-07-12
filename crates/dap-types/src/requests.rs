@@ -677,11 +677,13 @@ impl DapRequest for ScopesRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScopesArguments {
     pub frame_id: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScopesResponse {
     pub scopes: Vec<Scope>,
 }
@@ -713,6 +715,7 @@ pub struct VariablesArguments {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VariablesResponse {
     pub variables: Vec<Variable>,
 }

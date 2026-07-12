@@ -36,6 +36,16 @@ struct Args {
     #[arg(long)]
     gdb_remote: Option<String>,
 
+    /// Path to the source file for setting breakpoints (e.g. test_debuggee/main.c).
+    /// If not provided, inferred from elf_path by replacing .exe with .c.
+    #[arg(long, default_value = "")]
+    source_path: String,
+
+    /// Comma-separated line numbers for breakpoints (e.g. "9,13,4").
+    /// Defaults to "8,13,4" if empty and source_path is set.
+    #[arg(long, default_value = "")]
+    breakpoints: String,
+
     /// Force CLI mode (skips stdin terminal detection).
     #[arg(long, default_value = "false")]
     cli: bool,
@@ -197,41 +207,108 @@ pub async fn run() {
             }
         }
 
-        // ── 5. Set breakpoint at main ──────────────────────────────
-        tracing::info!("Setting breakpoint at main...");
-        let bp_result = session
-            .set_breakpoints(SetBreakpointsArguments {
-                source: Source {
-                    name: Some(args.elf_path.clone()),
-                    path: Some(args.elf_path.clone()),
-                    ..Default::default()
-                },
-                breakpoints: Some(vec![SourceBreakpoint {
-                    line: 0,
-                    column: None,
-                    condition: None,
-                    hit_condition: None,
-                    log_message: None,
-                    mode: None,
-                }]),
-                lines: None,
-                source_modified: None,
-            })
-            .await;
+        // ── 5. Set breakpoints with real source path and line numbers ──
+        let source_path = if !args.source_path.is_empty() {
+            // Resolve to absolute path, stripping Windows \\?\ prefix
+            let p = std::path::PathBuf::from(&args.source_path);
+            if p.is_absolute() {
+                p.display().to_string()
+            } else if let Ok(cwd) = std::env::current_dir() {
+                let abs = cwd.join(&p);
+                // std::fs::canonicalize would add \\?\ prefix on Windows which
+                // codelldb can't match against debug info. Use current_dir join instead.
+                abs.display().to_string()
+            } else {
+                args.source_path.clone()
+            }
+        } else {
+            // Infer source path from ELF path: look for main.c in the ELF's directory
+            let elf_path = std::path::Path::new(&args.elf_path);
+            let inferred = if let Some(parent) = elf_path.parent() {
+                parent.join("main.c")
+            } else {
+                std::path::PathBuf::from("main.c")
+            };
+            if inferred.is_absolute() {
+                inferred.display().to_string()
+            } else if let Ok(cwd) = std::env::current_dir() {
+                cwd.join(&inferred).display().to_string()
+            } else {
+                inferred.display().to_string()
+            }
+        };
 
-        match bp_result {
-            Ok(resp) => {
-                tracing::info!("Breakpoints set: {} total", resp.breakpoints.len());
-                for bp in &resp.breakpoints {
-                    tracing::info!(
-                        "  BP id={:?}, verified={}, line={:?}",
-                        bp.id,
-                        bp.verified,
-                        bp.line
-                    );
+        if source_path.is_empty() {
+            tracing::warn!("No source path available; skipping breakpoints.");
+        } else {
+            let bp_lines: Vec<u64> = if !args.breakpoints.is_empty() {
+                args.breakpoints
+                    .split(',')
+                    .filter_map(|s| s.trim().parse::<u64>().ok())
+                    .collect()
+            } else {
+                // Default breakpoints at executable lines:
+                //   line 9: printf("Hello...") — first executable line in main
+                //   line 13: int z = add(x, y) — after x, y init, before add() call
+                //   line 4: int result = a + b — inside add(), inspect params
+                vec![9, 13, 4]
+            };
+
+            if bp_lines.is_empty() {
+                tracing::warn!("No valid breakpoint line numbers; skipping breakpoints.");
+            } else {
+                tracing::info!(
+                    "Setting {} breakpoint(s) in {} at lines: {:?}",
+                    bp_lines.len(),
+                    source_path,
+                    bp_lines
+                );
+
+                let source_bps: Vec<SourceBreakpoint> = bp_lines
+                    .iter()
+                    .map(|&line| SourceBreakpoint {
+                        line,
+                        column: None,
+                        condition: None,
+                        hit_condition: None,
+                        log_message: None,
+                        mode: None,
+                    })
+                    .collect();
+
+                let bp_result = session
+                    .set_breakpoints(SetBreakpointsArguments {
+                        source: Source {
+                            name: Some(
+                                std::path::Path::new(&source_path)
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| source_path.clone()),
+                            ),
+                            path: Some(source_path),
+                            ..Default::default()
+                        },
+                        breakpoints: Some(source_bps),
+                        lines: None,
+                        source_modified: None,
+                    })
+                    .await;
+
+                match bp_result {
+                    Ok(resp) => {
+                        tracing::info!("Breakpoints set: {} total", resp.breakpoints.len());
+                        for bp in &resp.breakpoints {
+                            tracing::info!(
+                                "  BP id={:?}, verified={}, line={:?}",
+                                bp.id,
+                                bp.verified,
+                                bp.line
+                            );
+                        }
+                    }
+                    Err(e) => tracing::error!("setBreakpoints failed: {e}"),
                 }
             }
-            Err(e) => tracing::error!("setBreakpoints failed: {e}"),
         }
 
         // ── 6. Configuration done ───────────────────────────────────
@@ -269,9 +346,10 @@ pub async fn run() {
                             .as_ref()
                             .and_then(|b| serde_json::from_value(b.clone()).ok());
                         tracing::info!(
-                            "STOPPED: reason={:?}, thread={:?}",
+                            "STOPPED: reason={:?}, thread={:?}, hit_bp_ids={:?}",
                             body.as_ref().map(|b| &b.reason),
-                            body.as_ref().and_then(|b| b.thread_id)
+                            body.as_ref().and_then(|b| b.thread_id),
+                            body.as_ref().and_then(|b| b.hit_breakpoint_ids.as_deref())
                         );
 
                         // Query threads using the session's gated methods
@@ -310,23 +388,97 @@ pub async fn run() {
                                                 );
                                             }
 
-                                            // Query scopes for top frame
+                                            // Query scopes and variables for top frame
                                             if let Some(top_frame) = frames.first() {
                                                 match session.get_scopes(top_frame.id).await {
                                                     Ok(scopes) => {
                                                         for scope in &scopes {
-                                                            tracing::info!(
-                                                                "  Scope '{}': variablesRef={}, named={}, indexed={}",
-                                                                scope.name,
-                                                                scope.variables_reference,
-                                                                scope.named_variables.unwrap_or(0),
-                                                                scope.indexed_variables.unwrap_or(0),
-                                                            );
+                                                            let named = scope.named_variables.unwrap_or(0);
+                                                            let indexed = scope.indexed_variables.unwrap_or(0);
+                                                            let total_vars = named + indexed;
+
+                                                            // Only fetch variables for Local scope to keep
+                                                            // output manageable; summarize other scopes
+                                                            let is_local = scope.name == "Local";
+                                                            if is_local {
+                                                                tracing::info!(
+                                                                    "  Scope '{}': variablesRef={}, total_vars={}",
+                                                                    scope.name,
+                                                                    scope.variables_reference,
+                                                                    total_vars,
+                                                                );
+                                                            } else {
+                                                                tracing::info!(
+                                                                    "  Scope '{}': variablesRef={}, total_vars={} (skipped)",
+                                                                    scope.name,
+                                                                    scope.variables_reference,
+                                                                    total_vars,
+                                                                );
+                                                            }
+
+                                                            if is_local && scope.variables_reference > 0 {
+                                                                match session
+                                                                    .get_variables(
+                                                                        scope.variables_reference,
+                                                                        None,
+                                                                        None,
+                                                                        None,
+                                                                    )
+                                                                    .await
+                                                                {
+                                                                    Ok(vars) => {
+                                                                        tracing::info!(
+                                                                            "    Variables ({}):",
+                                                                            vars.len()
+                                                                        );
+                                                                        for v in &vars {
+                                                                            let type_info = v
+                                                                                .var_type
+                                                                                .as_deref()
+                                                                                .unwrap_or("?");
+                                                                            tracing::info!(
+                                                                                "      {} = {} (type: {})",
+                                                                                v.name,
+                                                                                v.value,
+                                                                                type_info,
+                                                                            );
+                                                                        }
+                                                                    }
+                                                                    Err(e) => {
+                                                                        tracing::error!(
+                                                                            "    variables failed for scope '{}': {e}",
+                                                                            scope.name
+                                                                        )
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                     Err(e) => {
                                                         tracing::error!("scopes failed: {e}")
                                                     }
+                                                }
+                                            }
+
+                                            // Continue execution after inspection
+                                            tracing::info!(
+                                                "Continuing execution (thread_id={})...",
+                                                thread_id
+                                            );
+                                            match session
+                                                .continue_execution(thread_id, None)
+                                                .await
+                                            {
+                                                Ok(resp) => {
+                                                    tracing::info!(
+                                                        "  Continued: all_threads_continued={:?}",
+                                                        resp.all_threads_continued
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    tracing::error!(
+                                                        "continue failed: {e}"
+                                                    );
                                                 }
                                             }
                                         }

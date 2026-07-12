@@ -6,18 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- MCP protocol layer (`mcp-protocol` crate): JSON-RPC 2.0 types and line-delimited stdio transport for AI client communication
-- MCP tool dispatch (`debug-bridge` crate): 24 MCP tool handlers (lifecycle, execution control, breakpoints, introspection, utilities) bridging AI tool calls to DebugSession operations with state-aware gating
-- MCP server mode: auto-detection via `is_terminal()`, background DAP event handler, `tools/list` returns state-filtered tools, errors returned as `isError: true` per MCP spec
-- Phase 3 test suite: 26 debug-bridge unit tests + 7 integration tests (lifecycle dispatch, state gating, utility tools)
+- CLI `--source-path` and `--breakpoints` arguments: set breakpoints with real source file paths and line numbers instead of `line: 0`/elf_path placeholder
+- Variable inspection in CLI `stopped` event handler: fetches and logs local variables with name, value, and type after scopes
+- `continue_execution()` after breakpoint inspection in CLI mode: program resumes automatically after each stop, allowing multiple breakpoint hits and clean exit
+- Stack backtrace display: 5-6 frame call chain (user function → system CRT) logged per breakpoint hit
+- Source path auto-inference: if `--source-path` not provided, looks for `main.c` in the ELF binary's directory
 
 ### Fixed
 
-- Race condition in `DapClient`: `start()` created a separate pending-requests map for the background reader task, so responses could never be matched to their waiters. Fixed by sharing `pending_requests` via `Arc<Mutex<HashMap>>` between `start()` and `send_request()`.
-- codelldb rejecting initialize request with "Malformed message": `adapterID`/`clientID` fields were serialized as `adapterId`/`clientId` (serde camelCase default) instead of DAP spec's uppercase `ID` suffix. Fixed with explicit `#[serde(rename)]` annotations. `adapterID` is a required field per DAP spec.
-- GDB remote debugging completely broken: `customLaunchSetupCommands` field was silently ignored by codelldb (field does not exist). Fixed by using codelldb's actual `processCreateCommands` field with correct `Vec<String>` format instead of `[{"text": "..."}]`.
-- CLI event flow deadlock: waited for `initialized` event before sending `launch`, but codelldb sends `initialized` only during `launch` processing. Fixed by sending launch first (fire-and-forget via `send_request_nb`), then awaiting the event.
-- `continued` event error when already in Running state: `configurationDone` transitions to Running, then the subsequent `continued` event tried to transition Running→Running (illegal). Fixed by skipping the transition if already Running.
+- `ScopesArguments`, `ScopesResponse`, `VariablesResponse` in `dap-types` were missing `#[serde(rename_all = "camelCase")]`, causing `frame_id` to serialize as `frame_id` instead of DAP spec's `frameId`. codelldb rejected scopes requests with "Malformed message".
 - CLI shutdown error when already Disconnected: `exited` event transitions to Disconnected before shutdown runs. Fixed by checking state before calling shutdown.
 
 ### Added

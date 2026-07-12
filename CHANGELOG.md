@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- E2E test scripts enhanced: 7-phase MCP dispatch verification (22 assertions) covering pre-init rejection, state-aware tool listing, error paths, and codelldb lifecycle; bash subshell bug fixed
+
 ### Added
 
 - CLI `--source-path` and `--breakpoints` arguments: set breakpoints with real source file paths and line numbers instead of `line: 0`/elf_path placeholder

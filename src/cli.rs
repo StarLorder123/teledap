@@ -20,8 +20,6 @@ use dap_types::requests::{
 };
 use dap_types::types::{Source, SourceBreakpoint};
 use debug_session::{DebugSession, SessionState};
-use tracing_subscriber::EnvFilter;
-
 /// TeleDAP — Debug Adapter Protocol client for AI-driven debugging.
 #[derive(Parser, Debug)]
 #[command(name = "teledap", version, about)]
@@ -48,19 +46,6 @@ struct Args {
 }
 
 pub async fn run() {
-    // Initialize tracing
-    let filter = if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "info"
-    };
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(filter)),
-        )
-        .with_target(false)
-        .init();
-
     let args = Args::parse();
 
     tracing::info!("TeleDAP Phase 2 — managed debug session");

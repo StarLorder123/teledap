@@ -269,8 +269,12 @@ impl DebugSession {
 
     /// Launch the debuggee. Valid only from Initialized.
     pub async fn launch(&self, args: LaunchRequestArguments) -> Result<(), DebugSessionError> {
+        // Uses send_request_nb (fire-and-forget) because codelldb defers the
+        // launch response until after configurationDone. The adapter sends the
+        // `initialized` event during launch processing, so callers must wait
+        // for that event separately.
         self.gate("launch").await?;
-        self.client.send_request::<LaunchRequest>(args).await?;
+        self.client.send_request_nb::<LaunchRequest>(args).await?;
         Ok(())
     }
 
@@ -525,8 +529,13 @@ impl DebugSession {
     pub async fn handle_event(&self, event: &Event) -> Result<bool, DebugSessionError> {
         match event.event.as_str() {
             "initialized" => {
-                self.transition_to(SessionState::Initialized, "event:initialized")
-                    .await?;
+                // The `initialized` event may arrive after the `initialize`
+                // DAP handshake has already transitioned us to Initialized.
+                // In that case this is a no-op (idempotent).
+                if self.current_state().await != SessionState::Initialized {
+                    self.transition_to(SessionState::Initialized, "event:initialized")
+                        .await?;
+                }
                 Ok(true)
             }
             "stopped" => {

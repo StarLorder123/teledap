@@ -8,6 +8,17 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- MCP tool dispatch E2E integration tests (8 new tests in `debug-bridge`): state gating for 11 Halted tools + pause, full lifecycle with debuggee through MCP dispatch, breakpoint + inspect chain (get_threads, get_stack_trace, get_scopes, get_variables, evaluate, assemble_context), step operations, function breakpoints, launch/config_done dispatch, pause dispatch
+- Test helpers: `test_debuggee_path()` (multi-candidate path resolution), `wait_for_stopped()`, `wait_for_initialized()` (DAP event loop utilities), `extract_first_thread_id()`
+
+### Fixed
+
+- `session::launch()` deadlock: codelldb defers the launch response until after `configurationDone`. Changed from blocking `send_request` to fire-and-forget `send_request_nb` (matching the CLI pattern and `configuration_done`).
+- `initialized` event idempotency: the DAP `initialized` event may arrive after the `initialize` handshake has already transitioned state to Initialized. Added a guard to skip the transition when already in Initialized (same pattern as Bug #4 `continued` event fix).
+- `NoResponseBody` null deserialization: codelldb sends `null` (not `{}`) for `next`, `stepIn`, `stepOut`, and `pause` response bodies. Replaced derived `Deserialize` with a custom impl that accepts any JSON value.
+
+### Added
+
 - CLI `--source-path` and `--breakpoints` arguments: set breakpoints with real source file paths and line numbers instead of `line: 0`/elf_path placeholder
 - Variable inspection in CLI `stopped` event handler: fetches and logs local variables with name, value, and type after scopes
 - `continue_execution()` after breakpoint inspection in CLI mode: program resumes automatically after each stop, allowing multiple breakpoint hits and clean exit

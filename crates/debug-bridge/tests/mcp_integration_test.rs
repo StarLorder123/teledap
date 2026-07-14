@@ -11,11 +11,15 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+use std::sync::Arc;
+
 use dap_client::DapClient;
 use dap_trace::TraceHandle;
 use debug_bridge::{BridgeError, ToolRegistry};
 use debug_session::{DebugSession, SessionState};
 use mcp_protocol::CallToolResult;
+use openocd_client::OpenOcdClient;
+use tokio::sync::RwLock;
 use tokio::time::timeout;
 
 // ── Environment probe ───────────────────────────────────────────────────
@@ -32,6 +36,10 @@ fn codelldb_available() -> bool {
             true
         })
         .unwrap_or(false)
+}
+
+fn empty_openocd() -> Arc<RwLock<Option<OpenOcdClient>>> {
+    Arc::new(RwLock::new(None))
 }
 
 fn make_session() -> (DebugSession, TraceHandle) {
@@ -159,6 +167,7 @@ async fn test_dispatch_unknown_tool() {
         &session,
         serde_json::json!({}),
         Some(&trace),
+        &empty_openocd(),
     )
     .await;
     assert!(result.is_err());
@@ -179,6 +188,7 @@ async fn test_state_gating_rejects_wrong_state() {
         &session,
         serde_json::json!({"threadId": 1}),
         Some(&trace),
+        &empty_openocd(),
     )
     .await;
     assert!(
@@ -225,6 +235,7 @@ async fn test_integration_lifecycle_tool_dispatch() {
             &session,
             serde_json::json!({"codelldbPath": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!result.is_error, "start should succeed");
@@ -236,6 +247,7 @@ async fn test_integration_lifecycle_tool_dispatch() {
             &session,
             serde_json::json!({"adapterId": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!result.is_error, "initialize should succeed");
@@ -251,9 +263,14 @@ async fn test_integration_lifecycle_tool_dispatch() {
         assert!(!names.contains(&"continue")); // Not available until Halted
 
         // 4. Shutdown
-        let result =
-            ToolRegistry::dispatch("shutdown", &session, serde_json::json!({}), Some(&trace))
-                .await?;
+        let result = ToolRegistry::dispatch(
+            "shutdown",
+            &session,
+            serde_json::json!({}),
+            Some(&trace),
+            &empty_openocd(),
+        )
+        .await?;
         assert!(!result.is_error, "shutdown should succeed");
         assert_eq!(session.current_state().await, SessionState::Disconnected);
 
@@ -284,9 +301,14 @@ async fn test_integration_utility_tools() {
 
     let result = timeout(Duration::from_secs(5), async {
         // get_state works in Disconnected state
-        let result =
-            ToolRegistry::dispatch("get_state", &session, serde_json::json!({}), Some(&trace))
-                .await?;
+        let result = ToolRegistry::dispatch(
+            "get_state",
+            &session,
+            serde_json::json!({}),
+            Some(&trace),
+            &empty_openocd(),
+        )
+        .await?;
         assert!(!result.is_error);
         let text = &result.content[0].text;
         assert!(
@@ -300,6 +322,7 @@ async fn test_integration_utility_tools() {
             &session,
             serde_json::json!({"alias": "src/main.cpp", "absolutePath": "/tmp/main.cpp"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!result.is_error);
@@ -310,6 +333,7 @@ async fn test_integration_utility_tools() {
             &session,
             serde_json::json!({"dir": "/tmp"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!result.is_error);
@@ -320,6 +344,7 @@ async fn test_integration_utility_tools() {
             &session,
             serde_json::json!({"query": "x"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!result.is_error);
@@ -390,7 +415,7 @@ async fn test_state_gating_all_halted_tools() {
     ];
 
     // Also verify set_breakpoints gating (requires Initialized/Running/Halted)
-    let non_halted_only = vec![(
+    let non_halted_only = [(
         "set_breakpoints",
         serde_json::json!({"sourcePath": "main.c", "breakpoints": [{"line": 1}]}),
     )];
@@ -399,7 +424,14 @@ async fn test_state_gating_all_halted_tools() {
         .iter()
         .chain(non_halted_only.iter())
     {
-        let result = ToolRegistry::dispatch(name, &session, params.clone(), Some(&trace)).await;
+        let result = ToolRegistry::dispatch(
+            name,
+            &session,
+            params.clone(),
+            Some(&trace),
+            &empty_openocd(),
+        )
+        .await;
         assert!(
             result.is_err(),
             "Tool '{name}' should be rejected in Disconnected state"
@@ -422,6 +454,7 @@ async fn test_state_gating_pause() {
         &session,
         serde_json::json!({"threadId": 1}),
         Some(&trace),
+        &empty_openocd(),
     )
     .await;
     assert!(
@@ -465,6 +498,7 @@ async fn test_integration_full_lifecycle_with_debuggee() {
             &session,
             serde_json::json!({"codelldbPath": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "start should succeed");
@@ -476,6 +510,7 @@ async fn test_integration_full_lifecycle_with_debuggee() {
             &session,
             serde_json::json!({"adapterId": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "initialize should succeed");
@@ -487,6 +522,7 @@ async fn test_integration_full_lifecycle_with_debuggee() {
             &session,
             serde_json::json!({"program": debuggee_path, "stopOnEntry": true}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "launch should succeed");
@@ -506,6 +542,7 @@ async fn test_integration_full_lifecycle_with_debuggee() {
             &session,
             serde_json::json!({}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "configuration_done should succeed");
@@ -516,9 +553,14 @@ async fn test_integration_full_lifecycle_with_debuggee() {
             assert_eq!(session.current_state().await, SessionState::Halted);
 
             // 7. get_state reports Halted
-            let r =
-                ToolRegistry::dispatch("get_state", &session, serde_json::json!({}), Some(&trace))
-                    .await?;
+            let r = ToolRegistry::dispatch(
+                "get_state",
+                &session,
+                serde_json::json!({}),
+                Some(&trace),
+                &empty_openocd(),
+            )
+            .await?;
             assert!(!r.is_error);
             assert!(
                 r.content[0].text.contains("Halted"),
@@ -565,8 +607,14 @@ async fn test_integration_full_lifecycle_with_debuggee() {
         }
 
         // 9. Shutdown
-        let r = ToolRegistry::dispatch("shutdown", &session, serde_json::json!({}), Some(&trace))
-            .await?;
+        let r = ToolRegistry::dispatch(
+            "shutdown",
+            &session,
+            serde_json::json!({}),
+            Some(&trace),
+            &empty_openocd(),
+        )
+        .await?;
         assert!(!r.is_error, "shutdown should succeed");
         assert_eq!(session.current_state().await, SessionState::Disconnected);
 
@@ -609,6 +657,7 @@ async fn test_integration_launch_config_done_dispatch() {
             &session,
             serde_json::json!({"codelldbPath": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
 
@@ -618,6 +667,7 @@ async fn test_integration_launch_config_done_dispatch() {
             &session,
             serde_json::json!({"program": debuggee_path}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await;
         assert!(
@@ -631,6 +681,7 @@ async fn test_integration_launch_config_done_dispatch() {
             &session,
             serde_json::json!({"adapterId": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
 
@@ -644,6 +695,7 @@ async fn test_integration_launch_config_done_dispatch() {
                 "stopOnEntry": true
             }),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error);
@@ -663,6 +715,7 @@ async fn test_integration_launch_config_done_dispatch() {
             &session,
             serde_json::json!({}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error);
@@ -673,7 +726,14 @@ async fn test_integration_launch_config_done_dispatch() {
         );
 
         // 7. Shutdown
-        ToolRegistry::dispatch("shutdown", &session, serde_json::json!({}), Some(&trace)).await?;
+        ToolRegistry::dispatch(
+            "shutdown",
+            &session,
+            serde_json::json!({}),
+            Some(&trace),
+            &empty_openocd(),
+        )
+        .await?;
 
         Ok::<_, BridgeError>(())
     })
@@ -716,6 +776,7 @@ async fn test_integration_pause_dispatch() {
             &session,
             serde_json::json!({"codelldbPath": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         ToolRegistry::dispatch(
@@ -723,6 +784,7 @@ async fn test_integration_pause_dispatch() {
             &session,
             serde_json::json!({"adapterId": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         ToolRegistry::dispatch(
@@ -730,6 +792,7 @@ async fn test_integration_pause_dispatch() {
             &session,
             serde_json::json!({"program": debuggee_path, "stopOnEntry": false}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         wait_for_initialized(&session, Duration::from_secs(5)).await?;
@@ -738,6 +801,7 @@ async fn test_integration_pause_dispatch() {
             &session,
             serde_json::json!({}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
 
@@ -752,6 +816,7 @@ async fn test_integration_pause_dispatch() {
                 &session,
                 serde_json::json!({"threadId": 1}),
                 Some(&trace),
+                &empty_openocd(),
             )
             .await;
             match r {
@@ -774,7 +839,14 @@ async fn test_integration_pause_dispatch() {
         }
 
         // Shutdown
-        ToolRegistry::dispatch("shutdown", &session, serde_json::json!({}), Some(&trace)).await?;
+        ToolRegistry::dispatch(
+            "shutdown",
+            &session,
+            serde_json::json!({}),
+            Some(&trace),
+            &empty_openocd(),
+        )
+        .await?;
 
         Ok::<_, BridgeError>(())
     })
@@ -815,6 +887,7 @@ async fn test_integration_step_operations() {
             &session,
             serde_json::json!({"codelldbPath": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         ToolRegistry::dispatch(
@@ -822,6 +895,7 @@ async fn test_integration_step_operations() {
             &session,
             serde_json::json!({"adapterId": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         ToolRegistry::dispatch(
@@ -829,6 +903,7 @@ async fn test_integration_step_operations() {
             &session,
             serde_json::json!({"program": debuggee_path, "stopOnEntry": true}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         wait_for_initialized(&session, Duration::from_secs(5)).await?;
@@ -837,6 +912,7 @@ async fn test_integration_step_operations() {
             &session,
             serde_json::json!({}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
 
@@ -844,15 +920,26 @@ async fn test_integration_step_operations() {
 
         if !halted {
             eprintln!("INFO: debuggee did not stop — step tests skipped");
-            ToolRegistry::dispatch("shutdown", &session, serde_json::json!({}), Some(&trace))
-                .await?;
+            ToolRegistry::dispatch(
+                "shutdown",
+                &session,
+                serde_json::json!({}),
+                Some(&trace),
+                &empty_openocd(),
+            )
+            .await?;
             return Ok(());
         }
 
         // Get thread id for step operations
-        let r =
-            ToolRegistry::dispatch("get_threads", &session, serde_json::json!({}), Some(&trace))
-                .await?;
+        let r = ToolRegistry::dispatch(
+            "get_threads",
+            &session,
+            serde_json::json!({}),
+            Some(&trace),
+            &empty_openocd(),
+        )
+        .await?;
         let thread_id = extract_first_thread_id(&r).unwrap_or(1);
 
         // ── step_over ──
@@ -861,6 +948,7 @@ async fn test_integration_step_operations() {
             &session,
             serde_json::json!({"threadId": thread_id}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "step_over dispatch should succeed");
@@ -879,6 +967,7 @@ async fn test_integration_step_operations() {
                 &session,
                 serde_json::json!({"threadId": thread_id}),
                 Some(&trace),
+                &empty_openocd(),
             )
             .await?;
             assert!(!r.is_error, "step_in dispatch should succeed");
@@ -897,6 +986,7 @@ async fn test_integration_step_operations() {
                 &session,
                 serde_json::json!({"threadId": thread_id}),
                 Some(&trace),
+                &empty_openocd(),
             )
             .await?;
             assert!(!r.is_error, "step_out dispatch should succeed");
@@ -908,7 +998,14 @@ async fn test_integration_step_operations() {
             // Don't wait — step_out may take a while or the program may exit
         }
 
-        ToolRegistry::dispatch("shutdown", &session, serde_json::json!({}), Some(&trace)).await?;
+        ToolRegistry::dispatch(
+            "shutdown",
+            &session,
+            serde_json::json!({}),
+            Some(&trace),
+            &empty_openocd(),
+        )
+        .await?;
 
         Ok::<_, BridgeError>(())
     })
@@ -952,6 +1049,7 @@ async fn test_integration_function_breakpoint() {
             &session,
             serde_json::json!({"codelldbPath": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         ToolRegistry::dispatch(
@@ -959,6 +1057,7 @@ async fn test_integration_function_breakpoint() {
             &session,
             serde_json::json!({"adapterId": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         ToolRegistry::dispatch(
@@ -966,6 +1065,7 @@ async fn test_integration_function_breakpoint() {
             &session,
             serde_json::json!({"program": debuggee_path, "stopOnEntry": false}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         wait_for_initialized(&session, Duration::from_secs(5)).await?;
@@ -976,6 +1076,7 @@ async fn test_integration_function_breakpoint() {
             &session,
             serde_json::json!({"names": ["add"]}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "set_function_breakpoints should succeed");
@@ -995,6 +1096,7 @@ async fn test_integration_function_breakpoint() {
             &session,
             serde_json::json!({}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
 
@@ -1007,6 +1109,7 @@ async fn test_integration_function_breakpoint() {
                 &session,
                 serde_json::json!({}),
                 Some(&trace),
+                &empty_openocd(),
             )
             .await?;
             let thread_id = extract_first_thread_id(&tr).unwrap_or(1);
@@ -1017,6 +1120,7 @@ async fn test_integration_function_breakpoint() {
                 &session,
                 serde_json::json!({"threadId": thread_id, "levels": 5}),
                 Some(&trace),
+                &empty_openocd(),
             )
             .await?;
             assert!(!r.is_error);
@@ -1035,7 +1139,14 @@ async fn test_integration_function_breakpoint() {
             eprintln!("INFO: debuggee did not stop at function breakpoint (may have exited)");
         }
 
-        ToolRegistry::dispatch("shutdown", &session, serde_json::json!({}), Some(&trace)).await?;
+        ToolRegistry::dispatch(
+            "shutdown",
+            &session,
+            serde_json::json!({}),
+            Some(&trace),
+            &empty_openocd(),
+        )
+        .await?;
 
         Ok::<_, BridgeError>(())
     })
@@ -1083,6 +1194,7 @@ async fn test_integration_breakpoint_and_inspect() {
             &session,
             serde_json::json!({"codelldbPath": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         ToolRegistry::dispatch(
@@ -1090,6 +1202,7 @@ async fn test_integration_breakpoint_and_inspect() {
             &session,
             serde_json::json!({"adapterId": "codelldb"}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         ToolRegistry::dispatch(
@@ -1097,6 +1210,7 @@ async fn test_integration_breakpoint_and_inspect() {
             &session,
             serde_json::json!({"program": debuggee_path, "stopOnEntry": true}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         wait_for_initialized(&session, Duration::from_secs(5)).await?;
@@ -1112,6 +1226,7 @@ async fn test_integration_breakpoint_and_inspect() {
                 "breakpoints": [{"line": 13}]
             }),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "set_breakpoints should succeed");
@@ -1129,6 +1244,7 @@ async fn test_integration_breakpoint_and_inspect() {
             &session,
             serde_json::json!({}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
 
@@ -1136,8 +1252,14 @@ async fn test_integration_breakpoint_and_inspect() {
         let mut halted = wait_for_stopped(&session, Duration::from_secs(5)).await?;
         if !halted {
             eprintln!("INFO: no initial stop — debuggee may have exited");
-            ToolRegistry::dispatch("shutdown", &session, serde_json::json!({}), Some(&trace))
-                .await?;
+            ToolRegistry::dispatch(
+                "shutdown",
+                &session,
+                serde_json::json!({}),
+                Some(&trace),
+                &empty_openocd(),
+            )
+            .await?;
             return Ok(());
         }
 
@@ -1147,6 +1269,7 @@ async fn test_integration_breakpoint_and_inspect() {
             &session,
             serde_json::json!({"threadId": 1}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "continue dispatch should succeed");
@@ -1155,15 +1278,26 @@ async fn test_integration_breakpoint_and_inspect() {
 
         if !halted {
             eprintln!("INFO: debuggee did not stop at breakpoint (may have exited)");
-            ToolRegistry::dispatch("shutdown", &session, serde_json::json!({}), Some(&trace))
-                .await?;
+            ToolRegistry::dispatch(
+                "shutdown",
+                &session,
+                serde_json::json!({}),
+                Some(&trace),
+                &empty_openocd(),
+            )
+            .await?;
             return Ok(());
         }
 
         // ── get_threads ──
-        let r =
-            ToolRegistry::dispatch("get_threads", &session, serde_json::json!({}), Some(&trace))
-                .await?;
+        let r = ToolRegistry::dispatch(
+            "get_threads",
+            &session,
+            serde_json::json!({}),
+            Some(&trace),
+            &empty_openocd(),
+        )
+        .await?;
         assert!(!r.is_error, "get_threads should succeed");
         let threads: Vec<serde_json::Value> =
             serde_json::from_str(&r.content[0].text).unwrap_or_default();
@@ -1176,6 +1310,7 @@ async fn test_integration_breakpoint_and_inspect() {
             &session,
             serde_json::json!({"threadId": thread_id, "levels": 10}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "get_stack_trace should succeed");
@@ -1191,6 +1326,7 @@ async fn test_integration_breakpoint_and_inspect() {
             &session,
             serde_json::json!({"frameId": frame_id}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "get_scopes should succeed");
@@ -1216,6 +1352,7 @@ async fn test_integration_breakpoint_and_inspect() {
             &session,
             serde_json::json!({"variablesReference": vars_ref}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "get_variables should succeed");
@@ -1229,6 +1366,7 @@ async fn test_integration_breakpoint_and_inspect() {
             &session,
             serde_json::json!({"expression": "1 + 1", "frameId": frame_id}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "evaluate should succeed");
@@ -1247,6 +1385,7 @@ async fn test_integration_breakpoint_and_inspect() {
             &session,
             serde_json::json!({"maxFrames": 5, "maxDepth": 1}),
             Some(&trace),
+            &empty_openocd(),
         )
         .await?;
         assert!(!r.is_error, "assemble_context should succeed");
@@ -1261,7 +1400,14 @@ async fn test_integration_breakpoint_and_inspect() {
         );
 
         // ── Shutdown ──
-        ToolRegistry::dispatch("shutdown", &session, serde_json::json!({}), Some(&trace)).await?;
+        ToolRegistry::dispatch(
+            "shutdown",
+            &session,
+            serde_json::json!({}),
+            Some(&trace),
+            &empty_openocd(),
+        )
+        .await?;
 
         Ok::<_, BridgeError>(())
     })

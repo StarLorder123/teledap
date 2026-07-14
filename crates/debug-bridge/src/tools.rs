@@ -250,6 +250,48 @@ pub fn all_tools() -> Vec<Tool> {
             input_schema: object_schema()
                 .with_required("dir", string("Absolute path to a project root directory")),
         },
+
+        // ═══════════════════════════════════════════════════════════════
+        // OpenOCD management tools (5 utility, no state gating)
+        // ═══════════════════════════════════════════════════════════════
+        Tool {
+            name: "openocd_start".into(),
+            title: "Start OpenOCD".into(),
+            description: "Launch the OpenOCD GDB server process with the specified config files. Optionally capture stdout/stderr to log files. OpenOCD must be started before launch with gdb_remote for embedded debugging.".into(),
+            input_schema: object_schema()
+                .with_required("openocd_path", string("Absolute path to the OpenOCD binary (e.g. \"/usr/bin/openocd\")"))
+                .with_required("config_files", array_of("OpenOCD config files in order (e.g. [\"board/stm32f4discovery.cfg\"])", "string"))
+                .with_optional("extra_args", array_of("Additional CLI arguments for OpenOCD (e.g. [\"-d\", \"2\"])", "string"))
+                .with_optional("log_dir", string("Directory for stdout/stderr log files. If omitted, output is discarded.")),
+        },
+        Tool {
+            name: "openocd_stop".into(),
+            title: "Stop OpenOCD".into(),
+            description: "Send the shutdown command to OpenOCD and terminate the process.".into(),
+            input_schema: object_schema(),
+        },
+        Tool {
+            name: "openocd_status".into(),
+            title: "Get OpenOCD status".into(),
+            description: "Returns whether OpenOCD is running, uptime, and log directory.".into(),
+            input_schema: object_schema(),
+        },
+        Tool {
+            name: "openocd_output".into(),
+            title: "Read OpenOCD output".into(),
+            description: "Read recent stdout (and optionally stderr) lines from the OpenOCD log files. Requires log_dir to have been configured in openocd_start.".into(),
+            input_schema: object_schema()
+                .with_optional("lines", integer("Number of recent lines to return (default: 100)"))
+                .with_optional("include_stderr", boolean("Also include stderr lines (default: false)")),
+        },
+        Tool {
+            name: "openocd_send".into(),
+            title: "Send OpenOCD command".into(),
+            description: "Send a raw Tcl command to OpenOCD and wait for the response. Useful for custom commands like 'reset halt', 'flash write_image', etc.".into(),
+            input_schema: object_schema()
+                .with_required("command", string("Tcl command to send (e.g. \"reset halt\", \"mdw 0x08000000 16\")"))
+                .with_optional("timeout_ms", integer("Response timeout in milliseconds (default: 5000)")),
+        },
     ]
 }
 
@@ -287,6 +329,12 @@ pub fn tool_operation(name: &str) -> Option<&'static str> {
         "get_state" => None,
         "register_path_alias" => None,
         "register_base_dir" => None,
+        // ── OpenOCD (utility, no gating) ──────────────────────────────
+        "openocd_start" => None,
+        "openocd_stop" => None,
+        "openocd_status" => None,
+        "openocd_output" => None,
+        "openocd_send" => None,
         _ => None,
     }
 }
@@ -300,7 +348,7 @@ mod tests {
     #[test]
     fn test_all_tools_count() {
         let tools = all_tools();
-        assert_eq!(tools.len(), 24, "Should be exactly 24 tools");
+        assert_eq!(tools.len(), 29, "Should be exactly 29 tools");
     }
 
     #[test]
@@ -351,6 +399,11 @@ mod tests {
             "register_path_alias",
             "register_base_dir",
             "search_variables",
+            "openocd_start",
+            "openocd_stop",
+            "openocd_status",
+            "openocd_output",
+            "openocd_send",
         ] {
             assert_eq!(
                 tool_operation(name),

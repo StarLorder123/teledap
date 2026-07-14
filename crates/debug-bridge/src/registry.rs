@@ -4,9 +4,13 @@
 //! dispatch time and validates the current session state before routing to
 //! the appropriate handler module.
 
+use std::sync::Arc;
+
 use dap_trace::{TraceDirection, TraceEntry, TraceHandle, TraceSource};
 use debug_session::{DebugSession, SessionState, ToolAvailability};
 use mcp_protocol::{CallToolResult, Tool};
+use openocd_client::OpenOcdClient;
+use tokio::sync::RwLock;
 
 use crate::error::BridgeError;
 use crate::handlers;
@@ -16,7 +20,7 @@ use crate::tools;
 pub struct ToolRegistry;
 
 impl ToolRegistry {
-    /// Returns the complete list of all 24 tools.
+    /// Returns the complete list of all 29 tools.
     pub fn list_tools() -> Vec<Tool> {
         tools::all_tools()
     }
@@ -51,6 +55,7 @@ impl ToolRegistry {
         session: &DebugSession,
         params: serde_json::Value,
         trace: Option<&TraceHandle>,
+        openocd: &Arc<RwLock<Option<OpenOcdClient>>>,
     ) -> Result<CallToolResult, BridgeError> {
         // ── State gating ─────────────────────────────────────────────
         if let Some(op) = tools::tool_operation(name) {
@@ -122,6 +127,23 @@ impl ToolRegistry {
             }
             "register_base_dir" => {
                 handlers::lifecycle::handle_register_base_dir(session, params).await
+            }
+
+            // OpenOCD management
+            "openocd_start" => {
+                handlers::openocd::handle_openocd_start(session, params, openocd).await
+            }
+            "openocd_stop" => {
+                handlers::openocd::handle_openocd_stop(session, params, openocd).await
+            }
+            "openocd_status" => {
+                handlers::openocd::handle_openocd_status(session, params, openocd).await
+            }
+            "openocd_output" => {
+                handlers::openocd::handle_openocd_output(session, params, openocd).await
+            }
+            "openocd_send" => {
+                handlers::openocd::handle_openocd_send(session, params, openocd).await
             }
 
             _ => Err(BridgeError::UnknownTool(name.to_string())),
@@ -214,6 +236,27 @@ mod tests {
             assert!(
                 names.contains(&"search_variables"),
                 "search_variables missing in state {state}"
+            );
+            // OpenOCD tools are also utility — always present
+            assert!(
+                names.contains(&"openocd_start"),
+                "openocd_start missing in state {state}"
+            );
+            assert!(
+                names.contains(&"openocd_stop"),
+                "openocd_stop missing in state {state}"
+            );
+            assert!(
+                names.contains(&"openocd_status"),
+                "openocd_status missing in state {state}"
+            );
+            assert!(
+                names.contains(&"openocd_output"),
+                "openocd_output missing in state {state}"
+            );
+            assert!(
+                names.contains(&"openocd_send"),
+                "openocd_send missing in state {state}"
             );
         }
     }

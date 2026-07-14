@@ -17,6 +17,7 @@ dap-types.workspace = true
 dap-trace.workspace = true
 debug-session.workspace = true
 mcp-protocol.workspace = true
+openocd-client.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

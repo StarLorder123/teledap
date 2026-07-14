@@ -52,6 +52,7 @@ pub struct DapClient {
 
     /// Pending request waiters, keyed by request `seq`.
     /// Shared via Arc so the background reader task and `send_request()` use the same map.
+    #[allow(clippy::type_complexity)]
     pending_requests: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Response, DapClientError>>>>>,
 
     /// Sender side of the event channel (background reader → consumers).

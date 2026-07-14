@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 - E2E test scripts enhanced: 7-phase MCP dispatch verification (22 assertions) covering pre-init rejection, state-aware tool listing, error paths, and codelldb lifecycle; bash subshell bug fixed
 
+### Documentation
+
+- MCP-DAP 协议桥接架构文档：覆盖项目整体架构、crate 依赖关系、MCP/DAP 协议层、桥接转换机制、24 个工具映射、事件流、会话状态机、变量缓存与路径映射、完整数据流示例
+
 ### Added
 
 - MCP tool dispatch E2E integration tests (8 new tests in `debug-bridge`): state gating for 11 Halted tools + pause, full lifecycle with debuggee through MCP dispatch, breakpoint + inspect chain (get_threads, get_stack_trace, get_scopes, get_variables, evaluate, assemble_context), step operations, function breakpoints, launch/config_done dispatch, pause dispatch

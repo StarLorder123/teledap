@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+- MCP Inspector 手动测试指南：使用官方 `@modelcontextprotocol/inspector` 在浏览器中交互式测试 TeleDAP，覆盖 codelldb 获取、状态门控体验、14 步完整调试流程、错误路径/路径映射/模糊搜索场景、排障表及两种替代测试方式
 - MCP-DAP 协议桥接架构文档：覆盖项目整体架构、crate 依赖关系、MCP/DAP 协议层、桥接转换机制、24 个工具映射、事件流、会话状态机、变量缓存与路径映射、完整数据流示例
 
 ### Added

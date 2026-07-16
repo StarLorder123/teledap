@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- 工具 schema 字段名与 handler 反序列化不一致：`tools/list` 公布的 21 个参数名为 snake_case（如 `codelldb_path`、`thread_id`、`source_path`），但所有 handler 参数结构体标注 `#[serde(rename_all = "camelCase")]` 实际要求 camelCase（如 `codelldbPath`）——按公布的 schema 调用必然报 `Invalid parameters: missing field`。已将 `tools.rs` 全部 schema 字段名统一为 camelCase，与 handler、集成测试及 CLAUDE.md 约定一致
 - `session::launch()` deadlock: codelldb defers the launch response until after `configurationDone`. Changed from blocking `send_request` to fire-and-forget `send_request_nb` (matching the CLI pattern and `configuration_done`).
 - `initialized` event idempotency: the DAP `initialized` event may arrive after the `initialize` handshake has already transitioned state to Initialized. Added a guard to skip the transition when already in Initialized (same pattern as Bug #4 `continued` event fix).
 - `NoResponseBody` null deserialization: codelldb sends `null` (not `{}`) for `next`, `stepIn`, `stepOut`, and `pause` response bodies. Replaced derived `Deserialize` with a custom impl that accepts any JSON value.

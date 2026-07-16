@@ -84,19 +84,20 @@ Disconnected → Connected → Initialized → { Running ⇄ Halted }
 | 1 | `start` | `codelldbPath`: codelldb.exe 的绝对路径 | 状态 → Connected |
 | 2 | *(重新 List Tools)* | — | 工具列表明显变多 |
 | 3 | `initialize` | `{}` | 状态 → Initialized，返回调试器能力 |
-| 4 | `set_breakpoints` | `path`: `E:/Code/cpp/teledap/test_debuggee/main.c`<br>`lines`: `[10]` | 返回断点确认（verified） |
+| 4 | `set_breakpoints` | `sourcePath`: `E:/Code/cpp/teledap/test_debuggee/main.c`<br>`breakpoints`: `[{"line": 13}]` | 返回断点信息（launch 前 `verified: false` 属正常，模块加载后自动绑定） |
 | 5 | `launch` | `program`: `E:/Code/cpp/teledap/test_debuggee/test_debuggee.exe` | fire-and-forget，暂无响应体 |
 | 6 | `configuration_done` | `{}` | 程序开始执行，命中断点 → Halted |
 | 7 | `get_state` | `{}` | 显示 `Halted` |
-| 8 | `get_stack_trace` | `{}` | 调用栈，栈顶停在 main.c 断点行 |
-| 9 | `get_scopes` | `frameId`: 上一步返回的 frame id | Locals 等作用域 |
-| 10 | `get_variables` | `variablesReference`: 上一步返回的引用 | 局部变量列表 |
-| 11 | `evaluate` | `expression`: 某个变量名 | 表达式求值结果 |
-| 12 | `assemble_context` | `{}` | **一次性返回组装好的完整调试上下文**（状态+栈+变量），这是 TeleDAP 为 AI 设计的核心特性 |
-| 13 | `continue` / `step_over` | `{}` | 状态 → Running，再次命中断点则回到 Halted |
-| 14 | `shutdown` | `{}` | 干净收尾，状态 → Disconnected |
+| 8 | `get_threads` | `{}` | 线程列表，记下线程 `id` |
+| 9 | `get_stack_trace` | `threadId`: 上一步的线程 id（可选 `levels`、`startFrame`） | 调用栈，栈顶停在 main.c 断点行，记下帧 `id` |
+| 10 | `get_scopes` | `frameId`: 上一步返回的 frame id | Locals 等作用域 |
+| 11 | `get_variables` | `variablesReference`: 上一步返回的引用 | 局部变量列表 |
+| 12 | `evaluate` | `expression`: 某个变量名 | 表达式求值结果 |
+| 13 | `assemble_context` | `{}` | **一次性返回组装好的完整调试上下文**（状态+栈+变量），这是 TeleDAP 为 AI 设计的核心特性 |
+| 14 | `continue` / `step_over` | `threadId`: 线程 id | 状态 → Running，再次命中断点则回到 Halted |
+| 15 | `shutdown` | `{}` | 干净收尾，状态 → Disconnected |
 
-> 断点行号注意：`lines` 必须指向**有实际可执行语句的行**（不能是空行、`{`、声明行），否则程序可能直接跑完不停。先打开 `test_debuggee/main.c` 确认行号。
+> 断点行号注意：`line` 必须指向**有实际可执行语句的行**（不能是空行、`{`、声明行），否则程序可能直接跑完不停。先打开 `test_debuggee/main.c` 确认行号。
 
 ## 7. 值得刻意尝试的场景
 
@@ -111,8 +112,8 @@ Disconnected → Connected → Initialized → { Running ⇄ Halted }
 
 ### 7.2 路径映射
 
-1. 先调用 `register_base_dir`，参数 `baseDir`: `E:/Code/cpp/teledap`
-2. 之后 `set_breakpoints` 的 `path` 只需写相对路径 `test_debuggee/main.c`
+1. 先调用 `register_base_dir`，参数 `dir`: `E:/Code/cpp/teledap`
+2. 之后 `set_breakpoints` 的 `sourcePath` 只需写相对路径 `test_debuggee/main.c`
 
 也可以用 `register_path_alias` 注册别名做更精细的映射。响应中的路径会被反向翻译回短路径。
 
@@ -125,7 +126,7 @@ Disconnected → Connected → Initialized → { Running ⇄ Halted }
 | 现象 | 可能原因 / 解决 |
 |---|---|
 | Connect 直接失败 | 二进制未编译或路径错误。先在终端验证：`echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \| .\target\release\teledap.exe` 看是否有响应 |
-| `start` 返回错误 | `codelldbPath` 不对，改用绝对路径；确认 codelldb.exe 可独立运行 |
+| `start` 返回错误 | `codelldbPath` 不对，改用绝对路径（勿在 JSON 字符串内再嵌一层引号）；确认 codelldb.exe 可独立运行 |
 | `launch` 后一直 Running 不停 | 断点行不可执行，换到有实际语句的行；或调试信息与源码不匹配（重新编译） |
 | 工具列表里找不到某工具 | 当前状态不允许该操作，先 `get_state` 确认状态，参考第 5 节 |
 | 想看原始报文 | Inspector 底部 **History** 面板记录每条 JSON-RPC 往返；teledap 侧另有 dap-trace 的 JSONL 审计日志 |

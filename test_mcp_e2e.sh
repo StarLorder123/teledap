@@ -149,7 +149,7 @@ fi
 
     if has_codelldb && [ "${TELEDAP_E2E_SKIP_CODELDB:-0}" != "1" ]; then
         # P5: Connected state
-        echo '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"start","arguments":{"codelldbPath":"codelldb"}}}'
+        echo '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"start","arguments":{"adapterPath":"codelldb"}}}'
         echo '{"jsonrpc":"2.0","id":8,"method":"tools/list","params":{}}'
 
         # P6: Initialized state

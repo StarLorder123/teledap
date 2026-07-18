@@ -268,7 +268,7 @@ $msg_tools_list_14 = '{"jsonrpc":"2.0","id":14,"method":"tools/list","params":{}
 $msg_tool_call_4 = '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"nonexistent_tool","arguments":{}}}'
 $msg_tool_call_5 = '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"continue","arguments":{"threadId":1}}}'
 $msg_tool_call_6 = '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"start","arguments":{}}}'
-$msg_tool_call_7 = '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"start","arguments":{"codelldbPath":"codelldb"}}}'
+$msg_tool_call_7 = '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"start","arguments":{"adapterPath":"codelldb"}}}'
 $msg_tool_call_9 = '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"initialize","arguments":{}}}'
 $msg_tool_call_10 = '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"get_state","arguments":{}}}'
 $msg_tool_call_12 = '{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"shutdown","arguments":{}}}'
@@ -370,12 +370,12 @@ try {
         }
     )
 
-    # 4c: Invalid params -- "start" requires codelldbPath
+    # 4c: Invalid params -- "start" requires adapterPath
     $r = Send-McpMessage -Process $server.Process -Json $msg_tool_call_6
     Assert-JsonRpcResponse -Response $r -ExpectedId 6 -ExpectToolError -Validations @(
         { param($o)
             $msg = $o.result.content[0].text
-            if ($msg -notmatch "start" -and $msg -notmatch "codelldbPath" -and $msg -notmatch "Invalid parameters") {
+            if ($msg -notmatch "start" -and $msg -notmatch "adapterPath" -and $msg -notmatch "Invalid parameters") {
                 throw ("Error should mention parameter issue: " + $msg)
             }
         }

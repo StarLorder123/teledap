@@ -31,7 +31,7 @@ pub async fn run() {
 
     // ── Background DAP event handler ──────────────────────────────────
     //
-    // This task continuously reads DAP events from codelldb stdout and
+    // This task continuously reads DAP events from the adapter's stdout and
     // feeds them through the session state machine so that state
     // transitions (Running <-> Halted) happen automatically while the
     // main loop is blocked on stdin for MCP requests.
@@ -144,7 +144,7 @@ pub async fn run() {
 
     // ── Cleanup ──────────────────────────────────────────────────────
     info!("MCP server shutting down.");
-    // Shut down OpenOCD first (if it was started), then codelldb.
+    // Shut down OpenOCD first (if it was started), then the debug adapter.
     if let Some(ref ocd) = *openocd.read().await {
         info!("Shutting down OpenOCD...");
         let _ = ocd.shutdown().await;

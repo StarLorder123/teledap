@@ -14,11 +14,16 @@
 //!
 //! ```ignore
 //! use debug_session::{DebugSession, SessionState};
+//! use dap_client::{AdapterConfig, AdapterKind};
 //!
 //! let client = DapClient::new(4 * 1024 * 1024);
 //! let session = DebugSession::new(client, None);
 //!
-//! session.start("/usr/bin/codelldb").await?;
+//! session.start(&AdapterConfig {
+//!     path: "/usr/bin/codelldb".into(),
+//!     kind: AdapterKind::Codelldb,
+//!     args: vec![],
+//! }).await?;
 //! session.initialize(InitializeRequestArguments { ... }).await?;
 //! session.launch(LaunchRequestArguments::with_program("app.elf")).await?;
 //! session.configuration_done().await?;
@@ -46,6 +51,7 @@ pub mod variables;
 // Re-export key types for convenience
 pub use cache::{VariableHandleCache, VariableHandleEntry};
 pub use context::{ContextChain, FrameContext, ScopeContext, ThreadContext};
+pub use dap_client::{AdapterConfig, AdapterKind};
 pub use error::DebugSessionError;
 pub use gating::ToolAvailability;
 pub use mapping::PathMapper;

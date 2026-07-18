@@ -160,10 +160,7 @@ pub async fn run() {
         // Verify state before sending launch (must be in Initialized)
         let state = session.current_state().await;
         if !debug_session::ToolAvailability::is_allowed("launch", state) {
-            tracing::error!(
-                "Cannot launch in state {:?}; expected Initialized",
-                state
-            );
+            tracing::error!("Cannot launch in state {:?}; expected Initialized", state);
             process::exit(1);
         }
 
@@ -393,8 +390,11 @@ pub async fn run() {
                                                 match session.get_scopes(top_frame.id).await {
                                                     Ok(scopes) => {
                                                         for scope in &scopes {
-                                                            let named = scope.named_variables.unwrap_or(0);
-                                                            let indexed = scope.indexed_variables.unwrap_or(0);
+                                                            let named =
+                                                                scope.named_variables.unwrap_or(0);
+                                                            let indexed = scope
+                                                                .indexed_variables
+                                                                .unwrap_or(0);
                                                             let total_vars = named + indexed;
 
                                                             // Only fetch variables for Local scope to keep
@@ -416,7 +416,9 @@ pub async fn run() {
                                                                 );
                                                             }
 
-                                                            if is_local && scope.variables_reference > 0 {
+                                                            if is_local
+                                                                && scope.variables_reference > 0
+                                                            {
                                                                 match session
                                                                     .get_variables(
                                                                         scope.variables_reference,
@@ -465,9 +467,7 @@ pub async fn run() {
                                                 "Continuing execution (thread_id={})...",
                                                 thread_id
                                             );
-                                            match session
-                                                .continue_execution(thread_id, None)
-                                                .await
+                                            match session.continue_execution(thread_id, None).await
                                             {
                                                 Ok(resp) => {
                                                     tracing::info!(
@@ -476,9 +476,7 @@ pub async fn run() {
                                                     );
                                                 }
                                                 Err(e) => {
-                                                    tracing::error!(
-                                                        "continue failed: {e}"
-                                                    );
+                                                    tracing::error!("continue failed: {e}");
                                                 }
                                             }
                                         }

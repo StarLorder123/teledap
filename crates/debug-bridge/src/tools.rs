@@ -49,14 +49,14 @@ pub fn all_tools() -> Vec<Tool> {
             title: "Start codelldb".into(),
             description: "Spawn the codelldb debug adapter process. Must be called before any other operation.".into(),
             input_schema: object_schema()
-                .with_required("codelldb_path", string("Absolute path to the codelldb binary")),
+                .with_required("codelldbPath", string("Absolute path to the codelldb binary")),
         },
         Tool {
             name: "initialize".into(),
             title: "Initialize DAP handshake".into(),
             description: "Perform the DAP initialize handshake with codelldb. Returns adapter capabilities.".into(),
             input_schema: object_schema()
-                .with_optional("adapter_id", string("Adapter identifier (default: \"codelldb\")")),
+                .with_optional("adapterId", string("Adapter identifier (default: \"codelldb\")")),
         },
         Tool {
             name: "launch".into(),
@@ -66,8 +66,8 @@ pub fn all_tools() -> Vec<Tool> {
                 .with_required("program", string("Path to the ELF binary to debug"))
                 .with_optional("args", array_of("Command-line arguments for the debuggee", "string"))
                 .with_optional("env", object_of("Environment variables for the debuggee", "string"))
-                .with_optional("stop_on_entry", boolean("Stop at program entry point (default: false)"))
-                .with_optional("gdb_remote", string("Remote GDB server address (e.g. \"localhost:3333\")")),
+                .with_optional("stopOnEntry", boolean("Stop at program entry point (default: false)"))
+                .with_optional("gdbRemote", string("Remote GDB server address (e.g. \"localhost:3333\")")),
         },
         Tool {
             name: "attach".into(),
@@ -98,40 +98,40 @@ pub fn all_tools() -> Vec<Tool> {
             title: "Continue execution".into(),
             description: "Resume execution of the debuggee. Only available when halted.".into(),
             input_schema: object_schema()
-                .with_required("thread_id", integer("Thread ID to continue"))
-                .with_optional("single_thread", boolean("Continue only this thread (default: false)")),
+                .with_required("threadId", integer("Thread ID to continue"))
+                .with_optional("singleThread", boolean("Continue only this thread (default: false)")),
         },
         Tool {
             name: "step_over".into(),
             title: "Step over".into(),
             description: "Execute the current source line, stepping over any function calls. Only available when halted.".into(),
             input_schema: object_schema()
-                .with_required("thread_id", integer("Thread ID to step"))
-                .with_optional("single_thread", boolean("Step only this thread (default: false)")),
+                .with_required("threadId", integer("Thread ID to step"))
+                .with_optional("singleThread", boolean("Step only this thread (default: false)")),
         },
         Tool {
             name: "step_in".into(),
             title: "Step into".into(),
             description: "Step into the function called at the current source line. Only available when halted.".into(),
             input_schema: object_schema()
-                .with_required("thread_id", integer("Thread ID to step"))
-                .with_optional("single_thread", boolean("Step only this thread (default: false)"))
-                .with_optional("target_id", integer("Specific step-in target ID")),
+                .with_required("threadId", integer("Thread ID to step"))
+                .with_optional("singleThread", boolean("Step only this thread (default: false)"))
+                .with_optional("targetId", integer("Specific step-in target ID")),
         },
         Tool {
             name: "step_out".into(),
             title: "Step out".into(),
             description: "Execute until the current function returns. Only available when halted.".into(),
             input_schema: object_schema()
-                .with_required("thread_id", integer("Thread ID to step"))
-                .with_optional("single_thread", boolean("Step only this thread (default: false)")),
+                .with_required("threadId", integer("Thread ID to step"))
+                .with_optional("singleThread", boolean("Step only this thread (default: false)")),
         },
         Tool {
             name: "pause".into(),
             title: "Pause execution".into(),
             description: "Pause a running debuggee. Only available when the debuggee is Running.".into(),
             input_schema: object_schema()
-                .with_required("thread_id", integer("Thread ID to pause")),
+                .with_required("threadId", integer("Thread ID to pause")),
         },
 
         // ═══════════════════════════════════════════════════════════════
@@ -142,7 +142,7 @@ pub fn all_tools() -> Vec<Tool> {
             title: "Set source breakpoints".into(),
             description: "Set breakpoints on source file lines. The source path is resolved through the path mapper if relative. Returns verified breakpoints.".into(),
             input_schema: object_schema()
-                .with_required("source_path", string("Path to the source file (relative or absolute)"))
+                .with_required("sourcePath", string("Path to the source file (relative or absolute)"))
                 .with_required("breakpoints", array_of("Breakpoint locations", "object")),
         },
         Tool {
@@ -152,7 +152,7 @@ pub fn all_tools() -> Vec<Tool> {
             input_schema: object_schema()
                 .with_required("names", array_of("Function names to break on", "string"))
                 .with_optional("condition", string("Optional conditional expression"))
-                .with_optional("hit_condition", string("Optional hit count condition (e.g. \">5\")")),
+                .with_optional("hitCondition", string("Optional hit count condition (e.g. \">5\")")),
         },
 
         // ═══════════════════════════════════════════════════════════════
@@ -169,23 +169,23 @@ pub fn all_tools() -> Vec<Tool> {
             title: "Get stack trace".into(),
             description: "Get the call stack for a specific thread. Returns stack frames with source locations. Only available when halted.".into(),
             input_schema: object_schema()
-                .with_required("thread_id", integer("Thread ID to query"))
+                .with_required("threadId", integer("Thread ID to query"))
                 .with_optional("levels", integer("Maximum number of frames to return"))
-                .with_optional("start_frame", integer("Frame index to start from (0-based)")),
+                .with_optional("startFrame", integer("Frame index to start from (0-based)")),
         },
         Tool {
             name: "get_scopes".into(),
             title: "Get scopes".into(),
             description: "Get the variable scopes (locals, globals, registers) for a stack frame. Only available when halted.".into(),
             input_schema: object_schema()
-                .with_required("frame_id", integer("Stack frame ID from get_stack_trace")),
+                .with_required("frameId", integer("Stack frame ID from get_stack_trace")),
         },
         Tool {
             name: "get_variables".into(),
             title: "Get variables".into(),
             description: "Get variables within a scope. The returned variables may have nested variablesReference handles for further expansion. Only available when halted.".into(),
             input_schema: object_schema()
-                .with_required("variables_reference", integer("Variables reference from a scope or variable"))
+                .with_required("variablesReference", integer("Variables reference from a scope or variable"))
                 .with_optional("filter", string("Variable filter: \"named\" or \"indexed\""))
                 .with_optional("start", integer("Start index for paging (0-based)"))
                 .with_optional("count", integer("Maximum number of variables to return")),
@@ -196,7 +196,7 @@ pub fn all_tools() -> Vec<Tool> {
             description: "Evaluate an expression in the debuggee's context (e.g. \"ptr->field\", \"x + y\"). Only available when halted.".into(),
             input_schema: object_schema()
                 .with_required("expression", string("C++ expression to evaluate"))
-                .with_optional("frame_id", integer("Stack frame ID for context"))
+                .with_optional("frameId", integer("Stack frame ID for context"))
                 .with_optional("context", string("Evaluation context: \"watch\", \"repl\", \"hover\", or \"clipboard\"")),
         },
         Tool {
@@ -204,7 +204,7 @@ pub fn all_tools() -> Vec<Tool> {
             title: "Set variable".into(),
             description: "Set a variable's value in the debuggee. Only available when halted.".into(),
             input_schema: object_schema()
-                .with_required("variables_reference", integer("Parent variables reference"))
+                .with_required("variablesReference", integer("Parent variables reference"))
                 .with_required("name", string("Variable name"))
                 .with_required("value", string("New value as a string")),
         },
@@ -213,9 +213,9 @@ pub fn all_tools() -> Vec<Tool> {
             title: "Assemble context".into(),
             description: "Build a full debug context chain: threads → frames → scopes → variables. Returns nested data structure with all levels expanded up to the configured depth. Only available when halted.".into(),
             input_schema: object_schema()
-                .with_optional("thread_id", integer("Specific thread ID (default: all threads)"))
-                .with_optional("max_frames", integer("Maximum frames per thread (default: 10)"))
-                .with_optional("max_depth", integer("Maximum variable expansion depth (default: 2)")),
+                .with_optional("threadId", integer("Specific thread ID (default: all threads)"))
+                .with_optional("maxFrames", integer("Maximum frames per thread (default: 10)"))
+                .with_optional("maxDepth", integer("Maximum variable expansion depth (default: 2)")),
         },
         Tool {
             name: "search_variables".into(),
@@ -241,7 +241,7 @@ pub fn all_tools() -> Vec<Tool> {
             description: "Register a mapping from an AI-relative source path to an absolute system path. This enables setting breakpoints using short paths like \"src/main.cpp\".".into(),
             input_schema: object_schema()
                 .with_required("alias", string("AI-relative path prefix (e.g. \"src/main.cpp\")"))
-                .with_required("absolute_path", string("Absolute system path (e.g. \"/home/user/project/src/main.cpp\")")),
+                .with_required("absolutePath", string("Absolute system path (e.g. \"/home/user/project/src/main.cpp\")")),
         },
         Tool {
             name: "register_base_dir".into(),
@@ -249,6 +249,48 @@ pub fn all_tools() -> Vec<Tool> {
             description: "Register a base directory for resolving relative source paths. Multiple base dirs can be registered; the first match wins.".into(),
             input_schema: object_schema()
                 .with_required("dir", string("Absolute path to a project root directory")),
+        },
+
+        // ═══════════════════════════════════════════════════════════════
+        // OpenOCD management tools (5 utility, no state gating)
+        // ═══════════════════════════════════════════════════════════════
+        Tool {
+            name: "openocd_start".into(),
+            title: "Start OpenOCD".into(),
+            description: "Launch the OpenOCD GDB server process with the specified config files. Optionally capture stdout/stderr to log files. OpenOCD must be started before launch with gdbRemote for embedded debugging.".into(),
+            input_schema: object_schema()
+                .with_required("openocdPath", string("Absolute path to the OpenOCD binary (e.g. \"/usr/bin/openocd\")"))
+                .with_required("configFiles", array_of("OpenOCD config files in order (e.g. [\"board/stm32f4discovery.cfg\"])", "string"))
+                .with_optional("extraArgs", array_of("Additional CLI arguments for OpenOCD (e.g. [\"-d\", \"2\"])", "string"))
+                .with_optional("logDir", string("Directory for stdout/stderr log files. If omitted, output is discarded.")),
+        },
+        Tool {
+            name: "openocd_stop".into(),
+            title: "Stop OpenOCD".into(),
+            description: "Send the shutdown command to OpenOCD and terminate the process.".into(),
+            input_schema: object_schema(),
+        },
+        Tool {
+            name: "openocd_status".into(),
+            title: "Get OpenOCD status".into(),
+            description: "Returns whether OpenOCD is running, uptime, and log directory.".into(),
+            input_schema: object_schema(),
+        },
+        Tool {
+            name: "openocd_output".into(),
+            title: "Read OpenOCD output".into(),
+            description: "Read recent stdout (and optionally stderr) lines from the OpenOCD log files. Requires logDir to have been configured in openocd_start.".into(),
+            input_schema: object_schema()
+                .with_optional("lines", integer("Number of recent lines to return (default: 100)"))
+                .with_optional("includeStderr", boolean("Also include stderr lines (default: false)")),
+        },
+        Tool {
+            name: "openocd_send".into(),
+            title: "Send OpenOCD command".into(),
+            description: "Send a raw Tcl command to OpenOCD and wait for the response. Useful for custom commands like 'reset halt', 'flash write_image', etc.".into(),
+            input_schema: object_schema()
+                .with_required("command", string("Tcl command to send (e.g. \"reset halt\", \"mdw 0x08000000 16\")"))
+                .with_optional("timeoutMs", integer("Response timeout in milliseconds (default: 5000)")),
         },
     ]
 }
@@ -287,6 +329,12 @@ pub fn tool_operation(name: &str) -> Option<&'static str> {
         "get_state" => None,
         "register_path_alias" => None,
         "register_base_dir" => None,
+        // ── OpenOCD (utility, no gating) ──────────────────────────────
+        "openocd_start" => None,
+        "openocd_stop" => None,
+        "openocd_status" => None,
+        "openocd_output" => None,
+        "openocd_send" => None,
         _ => None,
     }
 }
@@ -300,7 +348,7 @@ mod tests {
     #[test]
     fn test_all_tools_count() {
         let tools = all_tools();
-        assert_eq!(tools.len(), 24, "Should be exactly 24 tools");
+        assert_eq!(tools.len(), 29, "Should be exactly 29 tools");
     }
 
     #[test]
@@ -351,6 +399,11 @@ mod tests {
             "register_path_alias",
             "register_base_dir",
             "search_variables",
+            "openocd_start",
+            "openocd_stop",
+            "openocd_status",
+            "openocd_output",
+            "openocd_send",
         ] {
             assert_eq!(
                 tool_operation(name),

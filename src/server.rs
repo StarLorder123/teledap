@@ -14,6 +14,8 @@ use mcp_protocol::{
     CallToolResult, ImplementationInfo, IncomingMessage, InitializeResult, McpServer,
     ServerCapabilities, ToolsCapability, INTERNAL_ERROR, METHOD_NOT_FOUND, PARSE_ERROR,
 };
+use openocd_client::OpenOcdClient;
+use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 pub async fn run() {
@@ -23,6 +25,9 @@ pub async fn run() {
     let (trace, _bg) = TraceHandle::new(None, 10_000);
     let client = DapClient::with_trace(4 * 1024 * 1024, trace.clone());
     let session = Arc::new(DebugSession::new(client, Some(trace.clone())));
+
+    // OpenOCD is an optional extension — not started by default.
+    let openocd: Arc<RwLock<Option<OpenOcdClient>>> = Arc::new(RwLock::new(None));
 
     // ── Background DAP event handler ──────────────────────────────────
     //
@@ -98,7 +103,15 @@ pub async fn run() {
                             let _ = server.send_response(id, &result).await;
                         }
                         "tools/call" => {
-                            match handle_tool_call(id, &session, params, &trace, &mut server).await
+                            match handle_tool_call(
+                                id,
+                                &session,
+                                params,
+                                &trace,
+                                &openocd,
+                                &mut server,
+                            )
+                            .await
                             {
                                 Ok(_) => {}
                                 Err(e) => {
@@ -131,6 +144,11 @@ pub async fn run() {
 
     // ── Cleanup ──────────────────────────────────────────────────────
     info!("MCP server shutting down.");
+    // Shut down OpenOCD first (if it was started), then codelldb.
+    if let Some(ref ocd) = *openocd.read().await {
+        info!("Shutting down OpenOCD...");
+        let _ = ocd.shutdown().await;
+    }
     if session.current_state().await != SessionState::Disconnected {
         let _ = session.shutdown().await;
     }
@@ -164,6 +182,7 @@ async fn handle_tool_call(
     session: &DebugSession,
     params: Option<serde_json::Value>,
     trace: &TraceHandle,
+    openocd: &Arc<RwLock<Option<OpenOcdClient>>>,
     server: &mut McpServer,
 ) -> Result<(), String> {
     let params = params.ok_or_else(|| "Missing params in tools/call".to_string())?;
@@ -180,7 +199,7 @@ async fn handle_tool_call(
 
     info!("Tool call: {name}");
 
-    match ToolRegistry::dispatch(name, session, arguments, Some(trace)).await {
+    match ToolRegistry::dispatch(name, session, arguments, Some(trace), openocd).await {
         Ok(result) => server
             .send_response(id, &result)
             .await

@@ -4,3 +4,4 @@ pub mod breakpoint;
 pub mod execution;
 pub mod inspect;
 pub mod lifecycle;
+pub mod openocd;

@@ -33,8 +33,23 @@ pub trait DapRequest {
 pub struct NoArguments {}
 
 /// Placeholder for responses that have no body.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// Accepts any JSON value (including `null`) during deserialization, since some
+/// debug adapters send `null` instead of `{}` for commands like `next`,
+/// `stepIn`, `stepOut`, and `pause`.
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct NoResponseBody {}
+
+impl<'de> Deserialize<'de> for NoResponseBody {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Accept any value — the body content is irrelevant for empty responses
+        let _ = serde::de::IgnoredAny::deserialize(deserializer)?;
+        Ok(NoResponseBody {})
+    }
+}
 
 // ============================================================================
 // 1. initialize

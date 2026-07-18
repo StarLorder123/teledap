@@ -1,0 +1,13 @@
+[package]
+name = "openocd-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "OpenOCD process management client — spawn, Tcl command communication, and log capture"
+
+[dependencies]
+tokio.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true

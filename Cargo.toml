@@ -19,6 +19,7 @@ dap-trace.workspace = true
 debug-session.workspace = true
 mcp-protocol.workspace = true
 debug-bridge.workspace = true
+openocd-client.workspace = true
 
 [workspace]
 resolver = "2"
@@ -31,6 +32,7 @@ members = [
     "crates/debug-session",
     "crates/mcp-protocol",
     "crates/debug-bridge",
+    "crates/openocd-client",
 ]
 
 [workspace.package]
@@ -72,3 +74,4 @@ dap-trace = { path = "crates/dap-trace" }
 debug-session = { path = "crates/debug-session" }
 mcp-protocol = { path = "crates/mcp-protocol" }
 debug-bridge = { path = "crates/debug-bridge" }
+openocd-client = { path = "crates/openocd-client" }

@@ -6,6 +6,30 @@ All notable changes to this project will be documented in this file.
 
 - E2E test scripts enhanced: 7-phase MCP dispatch verification (22 assertions) covering pre-init rejection, state-aware tool listing, error paths, and codelldb lifecycle; bash subshell bug fixed
 
+### Documentation
+
+- MCP Inspector 手动测试指南：使用官方 `@modelcontextprotocol/inspector` 在浏览器中交互式测试 TeleDAP，覆盖 codelldb 获取、状态门控体验、14 步完整调试流程、错误路径/路径映射/模糊搜索场景、排障表及两种替代测试方式
+- MCP-DAP 协议桥接架构文档：覆盖项目整体架构、crate 依赖关系、MCP/DAP 协议层、桥接转换机制、24 个工具映射、事件流、会话状态机、变量缓存与路径映射、完整数据流示例
+
+### Added
+
+- `openocd-client` crate：OpenOCD 进程管理客户端，支持进程生命周期管理、Tcl 命令通信（`\x1a` 终结符）、stdout/stderr 管道日志文件记录或丢弃、后台管道防死锁读取、串行化命令锁
+- 5 个 OpenOCD MCP 工具（全部 utility，无 SessionState 门控）：`openocd_start`（启动服务器，可选日志目录）、`openocd_stop`（关闭进程）、`openocd_status`（查询运行状态和运行时间）、`openocd_output`（从日志文件读取尾部行，支持增量读取）、`openocd_send`（发送 Tcl 命令并等待响应，可配置超时）
+- OpenOCD 与 DebugSession 采用组合关系：`server.rs` 通过 `Arc<RwLock<Option<OpenOcdClient>>>` 独立持有，启动时默认为 `None`，仅当 AI 调用 `openocd_start` 时创建，纯 codelldb 会话零影响
+- `dap-trace` 中 `TraceSource::OpenOcdTx`/`OpenOcdRx` 变体已预留，OpenOCD 命令/响应可接入追踪系统
+
+### Added
+
+- MCP tool dispatch E2E integration tests (8 new tests in `debug-bridge`): state gating for 11 Halted tools + pause, full lifecycle with debuggee through MCP dispatch, breakpoint + inspect chain (get_threads, get_stack_trace, get_scopes, get_variables, evaluate, assemble_context), step operations, function breakpoints, launch/config_done dispatch, pause dispatch
+- Test helpers: `test_debuggee_path()` (multi-candidate path resolution), `wait_for_stopped()`, `wait_for_initialized()` (DAP event loop utilities), `extract_first_thread_id()`
+
+### Fixed
+
+- 工具 schema 字段名与 handler 反序列化不一致：`tools/list` 公布的 21 个参数名为 snake_case（如 `codelldb_path`、`thread_id`、`source_path`），但所有 handler 参数结构体标注 `#[serde(rename_all = "camelCase")]` 实际要求 camelCase（如 `codelldbPath`）——按公布的 schema 调用必然报 `Invalid parameters: missing field`。已将 `tools.rs` 全部 schema 字段名统一为 camelCase，与 handler、集成测试及 CLAUDE.md 约定一致
+- `session::launch()` deadlock: codelldb defers the launch response until after `configurationDone`. Changed from blocking `send_request` to fire-and-forget `send_request_nb` (matching the CLI pattern and `configuration_done`).
+- `initialized` event idempotency: the DAP `initialized` event may arrive after the `initialize` handshake has already transitioned state to Initialized. Added a guard to skip the transition when already in Initialized (same pattern as Bug #4 `continued` event fix).
+- `NoResponseBody` null deserialization: codelldb sends `null` (not `{}`) for `next`, `stepIn`, `stepOut`, and `pause` response bodies. Replaced derived `Deserialize` with a custom impl that accepts any JSON value.
+
 ### Added
 
 - CLI `--source-path` and `--breakpoints` arguments: set breakpoints with real source file paths and line numbers instead of `line: 0`/elf_path placeholder

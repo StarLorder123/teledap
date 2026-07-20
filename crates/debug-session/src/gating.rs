@@ -43,7 +43,7 @@ impl ToolAvailability {
             ],
 
             // ── Introspection ─────────────────────────────────────
-            "get_threads" => &[SessionState::Halted],
+            "get_threads" => &[SessionState::Running, SessionState::Halted],
             "get_stack_trace" => &[SessionState::Halted],
             "get_scopes" => &[SessionState::Halted],
             "get_variables" => &[SessionState::Halted],
@@ -177,8 +177,8 @@ mod tests {
         assert!(ops.contains(&"pause"));
         assert!(ops.contains(&"set_breakpoints"));
         assert!(ops.contains(&"shutdown"));
-        // Cannot introspect while running
-        assert!(!ops.contains(&"get_threads"));
+        assert!(ops.contains(&"get_threads"));
+        // Cannot introspect deeply while running
         assert!(!ops.contains(&"get_stack_trace"));
         assert!(!ops.contains(&"evaluate"));
     }

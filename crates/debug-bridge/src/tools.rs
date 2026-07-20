@@ -163,7 +163,7 @@ pub fn all_tools() -> Vec<Tool> {
         Tool {
             name: "get_threads".into(),
             title: "Get threads".into(),
-            description: "List all threads in the debuggee. Only available when halted.".into(),
+            description: "List all threads in the debuggee. Available when running or halted.".into(),
             input_schema: object_schema(),
         },
         Tool {

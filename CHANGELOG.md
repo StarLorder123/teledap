@@ -34,6 +34,7 @@ All notable changes to this project will be documented in this file.
 - OpenOCD 与 DebugSession 采用组合关系：`server.rs` 通过 `Arc<RwLock<Option<OpenOcdClient>>>` 独立持有，启动时默认为 `None`，仅当 AI 调用 `openocd_start` 时创建，纯 codelldb 会话零影响
 - `dap-trace` 中 `TraceSource::OpenOcdTx`/`OpenOcdRx` 变体已预留，OpenOCD 命令/响应可接入追踪系统
 - `liblldbPath` 初始化参数：MCP `initialize` 握手新增可选 `liblldbPath` 字段，CLI 新增 `--liblldb-path` 参数，配置后 spawn codelldb 时自动提取 DLL 所在父目录并注入 `PATH` 环境变量，使 Windows 上 codelldb 能在自定义路径找到 `liblldb.dll`
+- `get_threads` 工具状态门控扩展：从仅 `Halted` 扩展为 `Running` + `Halted`，允许在 debuggee 运行时查询线程 ID 和名称，无需先暂停
 
 ### Added
 

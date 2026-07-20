@@ -33,6 +33,7 @@ All notable changes to this project will be documented in this file.
 - 5 个 OpenOCD MCP 工具（全部 utility，无 SessionState 门控）：`openocd_start`（启动服务器，可选日志目录）、`openocd_stop`（关闭进程）、`openocd_status`（查询运行状态和运行时间）、`openocd_output`（从日志文件读取尾部行，支持增量读取）、`openocd_send`（发送 Tcl 命令并等待响应，可配置超时）
 - OpenOCD 与 DebugSession 采用组合关系：`server.rs` 通过 `Arc<RwLock<Option<OpenOcdClient>>>` 独立持有，启动时默认为 `None`，仅当 AI 调用 `openocd_start` 时创建，纯 codelldb 会话零影响
 - `dap-trace` 中 `TraceSource::OpenOcdTx`/`OpenOcdRx` 变体已预留，OpenOCD 命令/响应可接入追踪系统
+- `liblldbPath` 初始化参数：MCP `initialize` 握手新增可选 `liblldbPath` 字段，CLI 新增 `--liblldb-path` 参数，配置后 spawn codelldb 时自动提取 DLL 所在父目录并注入 `PATH` 环境变量，使 Windows 上 codelldb 能在自定义路径找到 `liblldb.dll`
 
 ### Added
 

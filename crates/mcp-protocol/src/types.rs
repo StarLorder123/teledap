@@ -45,6 +45,12 @@ pub struct InitializeParams {
     pub protocol_version: String,
     pub capabilities: serde_json::Value,
     pub client_info: ImplementationInfo,
+    /// Optional path to liblldb shared library (e.g. `C:\LLVM\bin\liblldb.dll`).
+    /// When set during the MCP initialize handshake, the parent directory
+    /// is prepended to `PATH` when spawning the debug adapter process,
+    /// allowing codelldb to find its required shared library at runtime.
+    #[serde(default)]
+    pub liblldb_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -400,5 +406,37 @@ mod tests {
         assert_eq!(params.protocol_version, "2025-11-25");
         assert_eq!(params.client_info.name, "Claude Desktop");
         assert_eq!(params.client_info.version, "1.0");
+    }
+
+    #[test]
+    fn test_initialize_params_with_liblldb_path() {
+        let json = serde_json::json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "Claude Desktop",
+                "version": "1.0"
+            },
+            "liblldbPath": "C:\\LLVM\\bin\\liblldb.dll"
+        });
+        let params: InitializeParams = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            params.liblldb_path.as_deref(),
+            Some("C:\\LLVM\\bin\\liblldb.dll")
+        );
+    }
+
+    #[test]
+    fn test_initialize_params_without_liblldb_path() {
+        let json = serde_json::json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "Claude Desktop",
+                "version": "1.0"
+            }
+        });
+        let params: InitializeParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.liblldb_path, None);
     }
 }

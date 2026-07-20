@@ -262,6 +262,15 @@ impl DebugSession {
         *self.adapter_kind.read().await
     }
 
+    /// Configure a path to liblldb for the underlying DAP client.
+    ///
+    /// When set, the parent directory is prepended to `PATH` at adapter
+    /// spawn time, allowing codelldb to find `liblldb.dll` on Windows
+    /// (or `liblldb.so` on other platforms).
+    pub async fn set_lib_lldb_path(&self, path: Option<String>) {
+        self.client.set_lib_lldb_path(path).await;
+    }
+
     /// Perform the initialize handshake. Valid only from Connected.
     ///
     /// Returns the adapter capabilities.

@@ -90,6 +90,11 @@ pub struct DapClient {
 
     /// The kind of adapter currently running (set by `start()`).
     adapter_kind: Mutex<Option<AdapterKind>>,
+
+    /// Optional path to the liblldb shared library.
+    /// When set, `start()` prepends its parent directory to the `PATH`
+    /// environment variable of the spawned adapter process.
+    lib_lldb_path: Mutex<Option<String>>,
 }
 
 impl DapClient {
@@ -108,6 +113,7 @@ impl DapClient {
             max_frame_size,
             trace: None,
             adapter_kind: Mutex::new(None),
+            lib_lldb_path: Mutex::new(None),
         }
     }
 
@@ -127,6 +133,7 @@ impl DapClient {
             max_frame_size,
             trace: Some(trace),
             adapter_kind: Mutex::new(None),
+            lib_lldb_path: Mutex::new(None),
         }
     }
 
@@ -138,6 +145,19 @@ impl DapClient {
     /// Returns the adapter kind, if the adapter has been started.
     pub async fn adapter_kind(&self) -> Option<AdapterKind> {
         *self.adapter_kind.lock().await
+    }
+
+    /// Set the path to the liblldb shared library.
+    ///
+    /// Call this before `start()` to make the DLL available to codelldb
+    /// at adapter-spawn time (prepended to the child process PATH).
+    pub async fn set_lib_lldb_path(&self, path: Option<String>) {
+        *self.lib_lldb_path.lock().await = path;
+    }
+
+    /// Returns the currently configured liblldb path, if any.
+    pub async fn lib_lldb_path(&self) -> Option<String> {
+        self.lib_lldb_path.lock().await.clone()
     }
 
     // ── Process Lifecycle ─────────────────────────────────────────
@@ -162,6 +182,29 @@ impl DapClient {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
+
+        // ── liblldb PATH injection ──────────────────────────────────
+        // On Windows, codelldb needs liblldb.dll in its DLL search path.
+        // Prepending the DLL's parent directory to PATH is the most
+        // portable way to make it findable without registry changes.
+        if let Some(ref lldb_path) = *self.lib_lldb_path.lock().await {
+            if let Some(parent) = std::path::Path::new(lldb_path).parent() {
+                let separator = if cfg!(windows) { ";" } else { ":" };
+                let existing_path = std::env::var("PATH").unwrap_or_default();
+                let new_path = format!("{}{}{}", parent.display(), separator, existing_path);
+                cmd.env("PATH", &new_path);
+                tracing::info!(
+                    liblldb_dir = %parent.display(),
+                    "prepended liblldb directory to adapter PATH"
+                );
+            } else {
+                tracing::warn!(
+                    liblldb_path = %lldb_path,
+                    "cannot extract parent directory from liblldb path; skipping PATH injection"
+                );
+            }
+        }
+
         if !config.args.is_empty() {
             cmd.args(&config.args);
         }
@@ -465,5 +508,26 @@ mod tests {
         let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
         // No tokio runtime needed for construction
         assert_eq!(client.seq.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_set_lib_lldb_path() {
+        let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
+
+        // Initially None
+        assert_eq!(client.lib_lldb_path().await, None);
+
+        // Set and verify
+        client
+            .set_lib_lldb_path(Some("C:\\LLVM\\bin\\liblldb.dll".into()))
+            .await;
+        assert_eq!(
+            client.lib_lldb_path().await.as_deref(),
+            Some("C:\\LLVM\\bin\\liblldb.dll")
+        );
+
+        // Clear and verify
+        client.set_lib_lldb_path(None).await;
+        assert_eq!(client.lib_lldb_path().await, None);
     }
 }

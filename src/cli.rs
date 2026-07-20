@@ -41,6 +41,11 @@ struct Args {
     #[arg(long = "adapter-args", num_args = 1.., allow_hyphen_values = true, default_values_t = Vec::<String>::new())]
     adapter_args: Vec<String>,
 
+    /// Path to liblldb shared library (Windows: liblldb.dll, Linux: liblldb.so).
+    /// Its parent directory is prepended to PATH when spawning the adapter.
+    #[arg(long)]
+    liblldb_path: Option<String>,
+
     /// Path to the ELF binary to debug.
     #[arg(long, default_value = "")]
     elf_path: String,
@@ -105,6 +110,10 @@ pub async fn run() {
     let log_dir = args.log_dir.map(std::path::PathBuf::from);
     let (trace, _trace_bg) = TraceHandle::new(log_dir, 10_000);
     let client = DapClient::with_trace(4 * 1024 * 1024, trace.clone());
+    if let Some(ref lldb_path) = args.liblldb_path {
+        client.set_lib_lldb_path(Some(lldb_path.clone())).await;
+        tracing::info!("liblldb path configured: {}", lldb_path);
+    }
     let session = DebugSession::new(client, Some(trace));
 
     // ── 1. Start debug adapter ─────────────────────────────────────
@@ -658,5 +667,22 @@ mod tests {
     fn test_log_dir() {
         let args = Args::try_parse_from(["teledap", "--log-dir", "./traces"]).unwrap();
         assert_eq!(args.log_dir.as_deref(), Some("./traces"));
+    }
+
+    #[test]
+    fn test_liblldb_path_arg() {
+        let args =
+            Args::try_parse_from(["teledap", "--liblldb-path", "C:\\LLVM\\bin\\liblldb.dll"])
+                .unwrap();
+        assert_eq!(
+            args.liblldb_path.as_deref(),
+            Some("C:\\LLVM\\bin\\liblldb.dll")
+        );
+    }
+
+    #[test]
+    fn test_liblldb_path_arg_none_by_default() {
+        let args = Args::try_parse_from(["teledap"]).unwrap();
+        assert_eq!(args.liblldb_path, None);
     }
 }

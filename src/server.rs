@@ -11,8 +11,8 @@ use dap_trace::TraceHandle;
 use debug_bridge::ToolRegistry;
 use debug_session::{DebugSession, SessionState};
 use mcp_protocol::{
-    CallToolResult, ImplementationInfo, IncomingMessage, InitializeResult, McpServer,
-    ServerCapabilities, ToolsCapability, INTERNAL_ERROR, METHOD_NOT_FOUND, PARSE_ERROR,
+    CallToolResult, ImplementationInfo, IncomingMessage, InitializeParams, InitializeResult,
+    McpServer, ServerCapabilities, ToolsCapability, INTERNAL_ERROR, METHOD_NOT_FOUND, PARSE_ERROR,
 };
 use openocd_client::OpenOcdClient;
 use tokio::sync::RwLock;
@@ -90,12 +90,14 @@ pub async fn run() {
                     }
 
                     match method.as_str() {
-                        "initialize" => match handle_initialize(id, &mut server).await {
-                            Ok(_) => initialized = true,
-                            Err(e) => {
-                                let _ = server.send_error(Some(id), INTERNAL_ERROR, &e).await;
+                        "initialize" => {
+                            match handle_initialize(id, params, &session, &mut server).await {
+                                Ok(_) => initialized = true,
+                                Err(e) => {
+                                    let _ = server.send_error(Some(id), INTERNAL_ERROR, &e).await;
+                                }
                             }
-                        },
+                        }
                         "tools/list" => {
                             let state = session.current_state().await;
                             let tools = ToolRegistry::list_tools_for_state(state);
@@ -155,7 +157,24 @@ pub async fn run() {
 }
 
 /// Handle the MCP `initialize` request — the first message in the handshake.
-async fn handle_initialize(id: u64, server: &mut McpServer) -> Result<(), String> {
+///
+/// Parses optional `liblldbPath` from the client params and stores it on the
+/// session so that the debug adapter can find `liblldb.dll` at spawn time.
+async fn handle_initialize(
+    id: u64,
+    params: Option<serde_json::Value>,
+    session: &DebugSession,
+    server: &mut McpServer,
+) -> Result<(), String> {
+    // Extract optional liblldbPath from initialize params.
+    // Silently ignore parse errors — the client may use an older MCP
+    // schema without liblldbPath, which is backward-compatible.
+    if let Some(ref p) = params {
+        if let Ok(init_params) = serde_json::from_value::<InitializeParams>(p.clone()) {
+            session.set_lib_lldb_path(init_params.liblldb_path).await;
+        }
+    }
+
     let result = InitializeResult {
         protocol_version: "2025-11-25".into(),
         capabilities: ServerCapabilities {

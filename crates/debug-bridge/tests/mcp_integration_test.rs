@@ -1,10 +1,10 @@
 //! Integration tests for the MCP tool dispatch layer.
 //!
-//! These tests use a real `DebugSession` backed by a live `codelldb` process to
+//! These tests use a real `DebugSession` backed by a live debug adapter process to
 //! verify that tool handlers correctly translate MCP tool calls into DAP
 //! operations and return properly structured MCP results.
 //!
-//! Every test uses `codelldb_available()` to gracefully skip when codelldb is
+//! Every test uses `codelldb_available()` to gracefully skip when the adapter is
 //! not installed. All async operations are wrapped in a 2-second timeout.
 
 use std::path::Path;
@@ -233,7 +233,7 @@ async fn test_integration_lifecycle_tool_dispatch() {
         let result = ToolRegistry::dispatch(
             "start",
             &session,
-            serde_json::json!({"codelldbPath": "codelldb"}),
+            serde_json::json!({"adapterPath": "codelldb"}),
             Some(&trace),
             &empty_openocd(),
         )
@@ -496,7 +496,7 @@ async fn test_integration_full_lifecycle_with_debuggee() {
         let r = ToolRegistry::dispatch(
             "start",
             &session,
-            serde_json::json!({"codelldbPath": "codelldb"}),
+            serde_json::json!({"adapterPath": "codelldb"}),
             Some(&trace),
             &empty_openocd(),
         )
@@ -655,7 +655,7 @@ async fn test_integration_launch_config_done_dispatch() {
         ToolRegistry::dispatch(
             "start",
             &session,
-            serde_json::json!({"codelldbPath": "codelldb"}),
+            serde_json::json!({"adapterPath": "codelldb"}),
             Some(&trace),
             &empty_openocd(),
         )
@@ -774,7 +774,7 @@ async fn test_integration_pause_dispatch() {
         ToolRegistry::dispatch(
             "start",
             &session,
-            serde_json::json!({"codelldbPath": "codelldb"}),
+            serde_json::json!({"adapterPath": "codelldb"}),
             Some(&trace),
             &empty_openocd(),
         )
@@ -885,7 +885,7 @@ async fn test_integration_step_operations() {
         ToolRegistry::dispatch(
             "start",
             &session,
-            serde_json::json!({"codelldbPath": "codelldb"}),
+            serde_json::json!({"adapterPath": "codelldb"}),
             Some(&trace),
             &empty_openocd(),
         )
@@ -1047,7 +1047,7 @@ async fn test_integration_function_breakpoint() {
         ToolRegistry::dispatch(
             "start",
             &session,
-            serde_json::json!({"codelldbPath": "codelldb"}),
+            serde_json::json!({"adapterPath": "codelldb"}),
             Some(&trace),
             &empty_openocd(),
         )
@@ -1192,7 +1192,7 @@ async fn test_integration_breakpoint_and_inspect() {
         ToolRegistry::dispatch(
             "start",
             &session,
-            serde_json::json!({"codelldbPath": "codelldb"}),
+            serde_json::json!({"adapterPath": "codelldb"}),
             Some(&trace),
             &empty_openocd(),
         )

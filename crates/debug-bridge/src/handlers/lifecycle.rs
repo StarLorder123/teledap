@@ -5,7 +5,7 @@
 use dap_types::requests::{
     AttachRequestArguments, InitializeRequestArguments, LaunchRequestArguments,
 };
-use debug_session::DebugSession;
+use debug_session::{AdapterConfig, AdapterKind, DebugSession};
 use mcp_protocol::CallToolResult;
 use serde::Deserialize;
 
@@ -25,7 +25,16 @@ fn ok_result(msg: impl Into<String>) -> Result<CallToolResult, BridgeError> {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StartParams {
-    codelldb_path: String,
+    /// Path to the debug adapter binary (canonical name).
+    /// Also accepts "codelldbPath" for backward compatibility.
+    #[serde(alias = "codelldbPath")]
+    adapter_path: String,
+    /// Adapter kind: "codelldb" (default) or "gdb".
+    #[serde(default)]
+    adapter_kind: Option<String>,
+    /// Command-line arguments to pass to the adapter binary.
+    #[serde(default)]
+    adapter_args: Option<Vec<String>>,
 }
 
 pub async fn handle_start(
@@ -38,9 +47,21 @@ pub async fn handle_start(
             message: e.to_string(),
         })?;
 
-    session.start(&p.codelldb_path).await?;
+    let kind = match p.adapter_kind.as_deref() {
+        Some("gdb") => AdapterKind::Gdb,
+        _ => AdapterKind::Codelldb, // default and "codelldb"
+    };
+
+    let config = AdapterConfig {
+        path: p.adapter_path,
+        kind,
+        args: p.adapter_args.unwrap_or_default(),
+    };
+
+    session.start(&config).await?;
     ok_result(format!(
-        "codelldb process started. State: {:?}",
+        "Debug adapter process started (kind: {:?}). State: {:?}",
+        kind,
         session.current_state().await
     ))
 }
@@ -64,10 +85,16 @@ pub async fn handle_initialize(
             message: e.to_string(),
         })?;
 
+    // Derive default adapter_id from the adapter kind (Codelldb → "lldb", Gdb → "gdb")
+    let default_id = match session.adapter_kind().await {
+        Some(AdapterKind::Gdb) => "gdb",
+        _ => "lldb", // Codelldb or unknown
+    };
+
     let args = InitializeRequestArguments {
         client_id: Some("teledap".into()),
         client_name: Some("TeleDAP".into()),
-        adapter_id: p.adapter_id.or_else(|| Some("lldb".into())),
+        adapter_id: p.adapter_id.or_else(|| Some(default_id.into())),
         locale: Some("en-US".into()),
         lines_start_at1: Some(true),
         columns_start_at1: Some(true),
@@ -124,7 +151,17 @@ pub async fn handle_launch(
     });
 
     if let Some(ref remote) = p.gdb_remote {
-        launch_extra["processCreateCommands"] = serde_json::json!([format!("gdb-remote {remote}")]);
+        match session.adapter_kind().await {
+            Some(AdapterKind::Gdb) => {
+                // GDB DAP uses `target` field for remote debugging
+                launch_extra["target"] = serde_json::json!(format!("remote {remote}"));
+            }
+            _ => {
+                // codelldb uses `processCreateCommands` for remote debugging
+                launch_extra["processCreateCommands"] =
+                    serde_json::json!([format!("gdb-remote {remote}")]);
+            }
+        }
     }
     if let Some(ref cargs) = p.args {
         launch_extra["args"] = serde_json::json!(cargs);
@@ -204,7 +241,7 @@ pub async fn handle_shutdown(
     _params: serde_json::Value,
 ) -> Result<CallToolResult, BridgeError> {
     session.shutdown().await?;
-    ok_result("Session shut down. codelldb process terminated.")
+    ok_result("Session shut down. Debug adapter process terminated.")
 }
 
 // ── get_state (utility) ─────────────────────────────────────────────────

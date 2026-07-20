@@ -11,7 +11,7 @@
 use std::process::Command;
 use std::time::Duration;
 
-use dap_client::{DapClient, DEFAULT_MAX_FRAME_SIZE};
+use dap_client::{AdapterConfig, AdapterKind, DapClient, DEFAULT_MAX_FRAME_SIZE};
 use dap_types::requests::{InitializeRequestArguments, LaunchRequestArguments};
 use debug_session::{DebugSession, DebugSessionError, SessionState, ToolAvailability};
 use tokio::time::timeout;
@@ -90,13 +90,18 @@ async fn test_full_state_machine_cycle() {
     let result = timeout(Duration::from_secs(5), async {
         // Disconnected → Connected
         assert_eq!(session.current_state().await, SessionState::Disconnected);
-        session.start("codelldb").await?;
+        let start_config = AdapterConfig {
+            path: "codelldb".into(),
+            kind: AdapterKind::Codelldb,
+            args: vec![],
+        };
+        session.start(&start_config).await?;
         assert_eq!(session.current_state().await, SessionState::Connected);
 
         // Connected → Initialized
         let caps = session
             .initialize(InitializeRequestArguments {
-                adapter_id: Some("codelldb".into()),
+                adapter_id: Some("lldb".into()),
                 client_name: Some("teledap-sm-test".into()),
                 ..Default::default()
             })
@@ -143,7 +148,12 @@ async fn test_state_watcher_notifications() {
     assert_eq!(*watcher.borrow(), SessionState::Disconnected);
 
     let result = timeout(Duration::from_secs(5), async {
-        session.start("codelldb").await?;
+        let start_config = AdapterConfig {
+            path: "codelldb".into(),
+            kind: AdapterKind::Codelldb,
+            args: vec![],
+        };
+        session.start(&start_config).await?;
 
         // The watcher should now show Connected
         // tokio::sync::watch only notifies on change, but borrow() reads the
@@ -156,7 +166,7 @@ async fn test_state_watcher_notifications() {
 
         session
             .initialize(InitializeRequestArguments {
-                adapter_id: Some("codelldb".into()),
+                adapter_id: Some("lldb".into()),
                 ..Default::default()
             })
             .await?;
@@ -211,7 +221,12 @@ async fn test_operation_gating_rejects_invalid_state() {
         );
 
         // Start properly
-        session.start("codelldb").await?;
+        let start_config = AdapterConfig {
+            path: "codelldb".into(),
+            kind: AdapterKind::Codelldb,
+            args: vec![],
+        };
+        session.start(&start_config).await?;
         assert_eq!(session.current_state().await, SessionState::Connected);
 
         // Attempt to launch before initialize → InvalidState
@@ -314,12 +329,17 @@ async fn test_context_chain_assembly() {
     let session = DebugSession::new(client, None);
 
     let result = timeout(Duration::from_secs(10), async {
-        session.start("codelldb").await?;
+        let start_config = AdapterConfig {
+            path: "codelldb".into(),
+            kind: AdapterKind::Codelldb,
+            args: vec![],
+        };
+        session.start(&start_config).await?;
 
         // Initialize
         session
             .initialize(InitializeRequestArguments {
-                adapter_id: Some("codelldb".into()),
+                adapter_id: Some("lldb".into()),
                 client_name: Some("teledap-ctx-test".into()),
                 ..Default::default()
             })
@@ -457,11 +477,16 @@ async fn test_step_operations() {
     let session = DebugSession::new(client, None);
 
     let result = timeout(Duration::from_secs(10), async {
-        session.start("codelldb").await?;
+        let start_config = AdapterConfig {
+            path: "codelldb".into(),
+            kind: AdapterKind::Codelldb,
+            args: vec![],
+        };
+        session.start(&start_config).await?;
 
         session
             .initialize(InitializeRequestArguments {
-                adapter_id: Some("codelldb".into()),
+                adapter_id: Some("lldb".into()),
                 client_name: Some("teledap-step-test".into()),
                 ..Default::default()
             })
@@ -609,11 +634,16 @@ async fn test_program_exit_handling() {
     let session = DebugSession::new(client, None);
 
     let result = timeout(Duration::from_secs(10), async {
-        session.start("codelldb").await?;
+        let start_config = AdapterConfig {
+            path: "codelldb".into(),
+            kind: AdapterKind::Codelldb,
+            args: vec![],
+        };
+        session.start(&start_config).await?;
 
         session
             .initialize(InitializeRequestArguments {
-                adapter_id: Some("codelldb".into()),
+                adapter_id: Some("lldb".into()),
                 client_name: Some("teledap-exit-test".into()),
                 ..Default::default()
             })

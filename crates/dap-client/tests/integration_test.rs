@@ -14,7 +14,7 @@
 use std::process::Command;
 use std::time::Duration;
 
-use dap_client::{DapClient, DapClientError, DEFAULT_MAX_FRAME_SIZE};
+use dap_client::{AdapterConfig, AdapterKind, DapClient, DapClientError, DEFAULT_MAX_FRAME_SIZE};
 use dap_types::requests::{
     ConfigurationDoneRequest, DisconnectArguments, DisconnectRequest, InitializeRequest,
     InitializeRequestArguments, NoArguments,
@@ -72,12 +72,17 @@ async fn test_integration_initialize_handshake() {
     let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
 
     let result = timeout(Duration::from_secs(2), async {
-        client.start("codelldb").await?;
+        let config = AdapterConfig {
+            path: "codelldb".into(),
+            kind: AdapterKind::Codelldb,
+            args: vec![],
+        };
+        client.start(&config).await?;
 
         // Send initialize request
         let caps = client
             .send_request::<InitializeRequest>(InitializeRequestArguments {
-                adapter_id: Some("codelldb".into()),
+                adapter_id: Some("lldb".into()),
                 client_name: Some("teledap-test".into()),
                 ..Default::default()
             })
@@ -128,7 +133,12 @@ async fn test_integration_process_cleanup() {
     let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
 
     let result = timeout(Duration::from_secs(2), async {
-        client.start("codelldb").await?;
+        let config = AdapterConfig {
+            path: "codelldb".into(),
+            kind: AdapterKind::Codelldb,
+            args: vec![],
+        };
+        client.start(&config).await?;
         assert!(
             client.is_running().await,
             "Client should report running after start"
@@ -137,7 +147,7 @@ async fn test_integration_process_cleanup() {
         // Complete initialize so shutdown has a clean disconnect path
         let _ = client
             .send_request::<InitializeRequest>(InitializeRequestArguments {
-                adapter_id: Some("codelldb".into()),
+                adapter_id: Some("lldb".into()),
                 ..Default::default()
             })
             .await;
@@ -194,12 +204,17 @@ async fn test_integration_full_lifecycle() {
     let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
 
     let result = timeout(Duration::from_secs(2), async {
-        client.start("codelldb").await?;
+        let config = AdapterConfig {
+            path: "codelldb".into(),
+            kind: AdapterKind::Codelldb,
+            args: vec![],
+        };
+        client.start(&config).await?;
 
         // Step 1: Initialize
         let caps = client
             .send_request::<InitializeRequest>(InitializeRequestArguments {
-                adapter_id: Some("codelldb".into()),
+                adapter_id: Some("lldb".into()),
                 client_name: Some("teledap-lifecycle-test".into()),
                 ..Default::default()
             })
@@ -279,14 +294,19 @@ async fn test_integration_duplicate_start_rejection() {
 
     let result = timeout(Duration::from_secs(2), async {
         // First start succeeds
-        client.start("codelldb").await?;
+        let config = AdapterConfig {
+            path: "codelldb".into(),
+            kind: AdapterKind::Codelldb,
+            args: vec![],
+        };
+        client.start(&config).await?;
         assert!(
             client.is_running().await,
             "Client should be running after first start"
         );
 
         // Second start must fail with SpawnFailed
-        let err = client.start("codelldb").await.unwrap_err();
+        let err = client.start(&config).await.unwrap_err();
         assert!(
             matches!(err, DapClientError::SpawnFailed(_)),
             "Expected SpawnFailed, got: {:?}",
@@ -327,12 +347,17 @@ async fn test_integration_send_request_nb() {
     let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
 
     let result = timeout(Duration::from_secs(2), async {
-        client.start("codelldb").await?;
+        let config = AdapterConfig {
+            path: "codelldb".into(),
+            kind: AdapterKind::Codelldb,
+            args: vec![],
+        };
+        client.start(&config).await?;
 
         // Initialize first so the adapter is ready to accept configurationDone
         let _caps = client
             .send_request::<InitializeRequest>(InitializeRequestArguments {
-                adapter_id: Some("codelldb".into()),
+                adapter_id: Some("lldb".into()),
                 client_name: Some("teledap-nb-test".into()),
                 ..Default::default()
             })

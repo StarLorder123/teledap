@@ -1,7 +1,7 @@
 //! DebugSession: managed debug session wrapping DapClient with state machine,
 //! event handling, and operation gating.
 
-use dap_client::DapClient;
+use dap_client::{AdapterConfig, AdapterKind, DapClient};
 use dap_trace::TraceHandle;
 use dap_types::{
     base::Event,
@@ -64,6 +64,9 @@ pub struct DebugSession {
     /// Variable handle cache: variable name → variablesReference mapping.
     /// Auto-invalidated when execution resumes.
     variable_cache: VariableHandleCache,
+    /// The kind of debug adapter in use (set by `start()`).
+    /// Controls behavioral branching for launch/configuration_done.
+    adapter_kind: RwLock<Option<AdapterKind>>,
 }
 
 impl DebugSession {
@@ -80,6 +83,7 @@ impl DebugSession {
             state_tx,
             path_mapper: RwLock::new(PathMapper::new()),
             variable_cache: VariableHandleCache::new(),
+            adapter_kind: RwLock::new(None),
         }
     }
 
@@ -244,12 +248,27 @@ impl DebugSession {
 
     // ── Lifecycle operations ──────────────────────────────────────────────────
 
-    /// Start the codelldb process. Valid only from Disconnected.
-    pub async fn start(&self, codelldb_path: &str) -> Result<(), DebugSessionError> {
+    /// Start the debug adapter process. Valid only from Disconnected.
+    pub async fn start(&self, config: &AdapterConfig) -> Result<(), DebugSessionError> {
         self.gate("start").await?;
-        self.client.start(codelldb_path).await?;
+        self.client.start(config).await?;
+        *self.adapter_kind.write().await = Some(config.kind);
         self.transition_to(SessionState::Connected, "start").await?;
         Ok(())
+    }
+
+    /// Returns the kind of adapter currently in use (if started).
+    pub async fn adapter_kind(&self) -> Option<AdapterKind> {
+        *self.adapter_kind.read().await
+    }
+
+    /// Configure a path to liblldb for the underlying DAP client.
+    ///
+    /// When set, the parent directory is prepended to `PATH` at adapter
+    /// spawn time, allowing codelldb to find `liblldb.dll` on Windows
+    /// (or `liblldb.so` on other platforms).
+    pub async fn set_lib_lldb_path(&self, path: Option<String>) {
+        self.client.set_lib_lldb_path(path).await;
     }
 
     /// Perform the initialize handshake. Valid only from Connected.
@@ -268,13 +287,24 @@ impl DebugSession {
     }
 
     /// Launch the debuggee. Valid only from Initialized.
+    ///
+    /// For **codelldb**, uses `send_request_nb` (fire-and-forget) because
+    /// codelldb defers the `launch` response until after `configurationDone`.
+    /// The adapter sends the `initialized` event during `launch` processing,
+    /// so callers must wait for that event separately.
+    ///
+    /// For **GDB** (and other spec-compliant adapters), uses the standard
+    /// blocking `send_request` which waits for the `launch` response.
     pub async fn launch(&self, args: LaunchRequestArguments) -> Result<(), DebugSessionError> {
-        // Uses send_request_nb (fire-and-forget) because codelldb defers the
-        // launch response until after configurationDone. The adapter sends the
-        // `initialized` event during launch processing, so callers must wait
-        // for that event separately.
         self.gate("launch").await?;
-        self.client.send_request_nb::<LaunchRequest>(args).await?;
+        match *self.adapter_kind.read().await {
+            Some(AdapterKind::Codelldb) | None => {
+                self.client.send_request_nb::<LaunchRequest>(args).await?;
+            }
+            Some(AdapterKind::Gdb) => {
+                self.client.send_request::<LaunchRequest>(args).await?;
+            }
+        }
         Ok(())
     }
 
@@ -287,11 +317,25 @@ impl DebugSession {
 
     /// Signal that configuration is complete. Valid only from Initialized.
     /// Transitions to Running on success.
+    ///
+    /// For **codelldb**, uses `send_request_nb` (fire-and-forget) because
+    /// the response body is meaningless and codelldb may not respond promptly.
+    ///
+    /// For **GDB**, uses the standard blocking `send_request`.
     pub async fn configuration_done(&self) -> Result<(), DebugSessionError> {
         self.gate("configuration_done").await?;
-        self.client
-            .send_request_nb::<ConfigurationDoneRequest>(NoArguments {})
-            .await?;
+        match *self.adapter_kind.read().await {
+            Some(AdapterKind::Codelldb) | None => {
+                self.client
+                    .send_request_nb::<ConfigurationDoneRequest>(NoArguments {})
+                    .await?;
+            }
+            Some(AdapterKind::Gdb) => {
+                self.client
+                    .send_request::<ConfigurationDoneRequest>(NoArguments {})
+                    .await?;
+            }
+        }
         *self._configuration_done.write().await = true;
         self.transition_to(SessionState::Running, "configuration_done")
             .await?;

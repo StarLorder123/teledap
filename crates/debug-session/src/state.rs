@@ -6,9 +6,9 @@ use std::fmt;
 /// The states a debug session can be in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionState {
-    /// No codelldb process is running.
+    /// No debug adapter process is running.
     Disconnected,
-    /// codelldb process is spawned but not yet initialized.
+    /// Debug adapter process is spawned but not yet initialized.
     Connected,
     /// initialize handshake is complete. Ready for launch/attach + configuration.
     Initialized,

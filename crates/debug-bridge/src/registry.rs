@@ -205,8 +205,8 @@ mod tests {
         assert!(names.contains(&"pause"));
         assert!(names.contains(&"set_breakpoints"));
         assert!(names.contains(&"shutdown"));
-        // Should NOT contain introspection tools
-        assert!(!names.contains(&"get_threads"));
+        assert!(names.contains(&"get_threads"));
+        // Should NOT contain deep introspection tools while running
         assert!(!names.contains(&"evaluate"));
     }
 

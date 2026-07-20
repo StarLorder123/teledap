@@ -46,17 +46,19 @@ pub fn all_tools() -> Vec<Tool> {
         // ═══════════════════════════════════════════════════════════════
         Tool {
             name: "start".into(),
-            title: "Start codelldb".into(),
-            description: "Spawn the codelldb debug adapter process. Must be called before any other operation.".into(),
+            title: "Start debug adapter".into(),
+            description: "Spawn the debug adapter process. Must be called before any other operation. Supports codelldb and GDB (gdb -i dap).".into(),
             input_schema: object_schema()
-                .with_required("codelldbPath", string("Absolute path to the codelldb binary")),
+                .with_required("adapterPath", string("Absolute path to the debug adapter binary (e.g. \"codelldb\" or \"gdb\"). Also accepts \"codelldbPath\" for backward compatibility."))
+                .with_optional("adapterKind", string("Adapter type: \"codelldb\" (default) or \"gdb\". Controls behavioral differences like launch response handling."))
+                .with_optional("adapterArgs", array_of("Command-line arguments for the adapter binary (e.g. [\"-i\", \"dap\"] for GDB)", "string")),
         },
         Tool {
             name: "initialize".into(),
             title: "Initialize DAP handshake".into(),
-            description: "Perform the DAP initialize handshake with codelldb. Returns adapter capabilities.".into(),
+            description: "Perform the DAP initialize handshake with the debug adapter. Returns adapter capabilities. The default adapterId is derived from the adapter kind (\"lldb\" for codelldb, \"gdb\" for GDB).".into(),
             input_schema: object_schema()
-                .with_optional("adapterId", string("Adapter identifier (default: \"codelldb\")")),
+                .with_optional("adapterId", string("Adapter identifier (default: runtime-derived from adapter kind)")),
         },
         Tool {
             name: "launch".into(),
@@ -86,7 +88,7 @@ pub fn all_tools() -> Vec<Tool> {
         Tool {
             name: "shutdown".into(),
             title: "Shut down session".into(),
-            description: "Disconnect from the debug adapter and terminate the codelldb process. Cleans up all resources.".into(),
+            description: "Disconnect from the debug adapter and terminate the adapter process. Cleans up all resources.".into(),
             input_schema: object_schema(),
         },
 
@@ -161,7 +163,7 @@ pub fn all_tools() -> Vec<Tool> {
         Tool {
             name: "get_threads".into(),
             title: "Get threads".into(),
-            description: "List all threads in the debuggee. Only available when halted.".into(),
+            description: "List all threads in the debuggee. Available when running or halted.".into(),
             input_schema: object_schema(),
         },
         Tool {

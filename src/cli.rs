@@ -6,13 +6,14 @@
 //!
 //! Usage:
 //! ```bash
-//! cargo run -- --codelldb-path /path/to/codelldb [--elf-path /path/to/elf]
+//! cargo run -- --adapter-path /path/to/codelldb [--elf-path /path/to/elf]
+//! cargo run -- --adapter-path gdb --adapter-kind gdb --adapter-args -i --adapter-args dap --elf-path ./app.elf
 //! ```
 
 use std::process;
 
 use clap::Parser;
-use dap_client::DapClient;
+use dap_client::{AdapterConfig, AdapterKind, DapClient};
 use dap_trace::TraceHandle;
 use dap_types::events::{ExitedEventBody, OutputEventBody, StoppedEventBody};
 use dap_types::requests::{
@@ -24,9 +25,26 @@ use debug_session::{DebugSession, SessionState};
 #[derive(Parser, Debug)]
 #[command(name = "teledap", version, about)]
 struct Args {
-    /// Path to the codelldb binary.
+    /// Path to the debug adapter binary (e.g. "codelldb" or "gdb").
     #[arg(long, default_value = "codelldb")]
+    adapter_path: String,
+
+    /// Deprecated: use --adapter-path instead.
+    #[arg(long, default_value = "", hide = true)]
     codelldb_path: String,
+
+    /// Adapter kind: "codelldb" (default) or "gdb".
+    #[arg(long, default_value = "codelldb")]
+    adapter_kind: String,
+
+    /// Command-line arguments for the adapter binary (can be specified multiple times).
+    #[arg(long = "adapter-args", num_args = 1.., allow_hyphen_values = true, default_values_t = Vec::<String>::new())]
+    adapter_args: Vec<String>,
+
+    /// Path to liblldb shared library (Windows: liblldb.dll, Linux: liblldb.so).
+    /// Its parent directory is prepended to PATH when spawning the adapter.
+    #[arg(long)]
+    liblldb_path: Option<String>,
 
     /// Path to the ELF binary to debug.
     #[arg(long, default_value = "")]
@@ -62,31 +80,62 @@ struct Args {
 pub async fn run() {
     let args = Args::parse();
 
+    // Resolve adapter path (prefer --adapter-path, fall back to deprecated --codelldb-path)
+    let adapter_path = if !args.codelldb_path.is_empty() {
+        tracing::warn!("--codelldb-path is deprecated, use --adapter-path instead");
+        args.codelldb_path.clone()
+    } else {
+        args.adapter_path.clone()
+    };
+
+    let adapter_kind = match args.adapter_kind.as_str() {
+        "gdb" => AdapterKind::Gdb,
+        _ => AdapterKind::Codelldb,
+    };
+
+    let adapter_config = AdapterConfig {
+        path: adapter_path.clone(),
+        kind: adapter_kind,
+        args: args.adapter_args.clone(),
+    };
+
     tracing::info!("TeleDAP Phase 2 — managed debug session");
-    tracing::info!("Starting codelldb from: {}", args.codelldb_path);
+    tracing::info!(
+        "Starting debug adapter from: {} (kind: {:?})",
+        adapter_path,
+        adapter_kind
+    );
 
     // Set up debug trace
     let log_dir = args.log_dir.map(std::path::PathBuf::from);
     let (trace, _trace_bg) = TraceHandle::new(log_dir, 10_000);
     let client = DapClient::with_trace(4 * 1024 * 1024, trace.clone());
+    if let Some(ref lldb_path) = args.liblldb_path {
+        client.set_lib_lldb_path(Some(lldb_path.clone())).await;
+        tracing::info!("liblldb path configured: {}", lldb_path);
+    }
     let session = DebugSession::new(client, Some(trace));
 
-    // ── 1. Start codelldb ─────────────────────────────────────────
-    if let Err(e) = session.start(&args.codelldb_path).await {
-        tracing::error!("Failed to start codelldb: {e}");
+    // ── 1. Start debug adapter ─────────────────────────────────────
+    if let Err(e) = session.start(&adapter_config).await {
+        tracing::error!("Failed to start debug adapter: {e}");
         process::exit(1);
     }
     tracing::info!(
-        "codelldb process started (state: {:?})",
+        "Debug adapter process started (state: {:?})",
         SessionState::Connected
     );
 
     // ── 2. Initialize handshake ───────────────────────────────────
+    let default_adapter_id = match adapter_kind {
+        AdapterKind::Gdb => "gdb",
+        AdapterKind::Codelldb => "lldb",
+    };
     let caps = match session
         .initialize(InitializeRequestArguments {
             client_id: Some("teledap".into()),
             client_name: Some("TeleDAP".into()),
-            adapter_id: Some("lldb".into()),
+            adapter_id: Some(default_adapter_id.into()),
             locale: Some("en-US".into()),
             lines_start_at1: Some(true),
             columns_start_at1: Some(true),
@@ -135,9 +184,6 @@ pub async fn run() {
     tracing::info!("  Step back: {:?}", caps.supports_step_back);
 
     // ── 3. Launch debuggee (if elf_path provided) ──────────────────
-    // Note: codelldb sends the `initialized` event during launch request
-    // processing, so we must send launch first (fire-and-forget), then wait
-    // for the initialized event.
     if !args.elf_path.is_empty() {
         tracing::info!("Launching debuggee: {}", args.elf_path);
 
@@ -147,8 +193,15 @@ pub async fn run() {
         });
 
         if let Some(ref remote) = args.gdb_remote {
-            launch_extra["processCreateCommands"] =
-                serde_json::json!([format!("gdb-remote {remote}")]);
+            match adapter_kind {
+                AdapterKind::Gdb => {
+                    launch_extra["target"] = serde_json::json!(format!("remote {remote}"));
+                }
+                AdapterKind::Codelldb => {
+                    launch_extra["processCreateCommands"] =
+                        serde_json::json!([format!("gdb-remote {remote}")]);
+                }
+            }
         }
 
         let launch_args = LaunchRequestArguments {
@@ -157,19 +210,19 @@ pub async fn run() {
             extra: launch_extra,
         };
 
-        // Verify state before sending launch (must be in Initialized)
+        // Verify state before launching (must be in Initialized)
         let state = session.current_state().await;
         if !debug_session::ToolAvailability::is_allowed("launch", state) {
             tracing::error!("Cannot launch in state {:?}; expected Initialized", state);
             process::exit(1);
         }
 
+        // Use session.launch() which handles adapter-specific behavior
         session
-            .client()
-            .send_request_nb::<dap_types::requests::LaunchRequest>(launch_args)
+            .launch(launch_args)
             .await
-            .unwrap_or_else(|e| tracing::error!("Launch send failed: {e}"));
-        tracing::info!("Launch request sent (non-blocking).");
+            .unwrap_or_else(|e| tracing::error!("Launch failed: {e}"));
+        tracing::info!("Launch request sent.");
 
         // ── 4. Wait for initialized event ─────────────────────────────
         tracing::info!("Waiting for 'initialized' event...");
@@ -562,7 +615,8 @@ mod tests {
     #[test]
     fn test_default_args() {
         let args = Args::try_parse_from(["teledap"]).unwrap();
-        assert_eq!(args.codelldb_path, "codelldb");
+        assert_eq!(args.adapter_path, "codelldb");
+        assert_eq!(args.codelldb_path, "");
         assert_eq!(args.elf_path, "");
         assert!(args.gdb_remote.is_none());
         assert!(!args.verbose);
@@ -570,10 +624,23 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_codelldb_path() {
+    fn test_custom_adapter_path() {
         let args =
-            Args::try_parse_from(["teledap", "--codelldb-path", "/usr/bin/codelldb"]).unwrap();
-        assert_eq!(args.codelldb_path, "/usr/bin/codelldb");
+            Args::try_parse_from(["teledap", "--adapter-path", "/usr/bin/codelldb"]).unwrap();
+        assert_eq!(args.adapter_path, "/usr/bin/codelldb");
+    }
+
+    #[test]
+    fn test_adapter_kind_gdb() {
+        let args = Args::try_parse_from(["teledap", "--adapter-kind", "gdb"]).unwrap();
+        assert_eq!(args.adapter_kind, "gdb");
+    }
+
+    #[test]
+    fn test_adapter_args() {
+        let args =
+            Args::try_parse_from(["teledap", "--adapter-args=-i", "--adapter-args=dap"]).unwrap();
+        assert_eq!(args.adapter_args, vec!["-i", "dap"]);
     }
 
     #[test]
@@ -600,5 +667,22 @@ mod tests {
     fn test_log_dir() {
         let args = Args::try_parse_from(["teledap", "--log-dir", "./traces"]).unwrap();
         assert_eq!(args.log_dir.as_deref(), Some("./traces"));
+    }
+
+    #[test]
+    fn test_liblldb_path_arg() {
+        let args =
+            Args::try_parse_from(["teledap", "--liblldb-path", "C:\\LLVM\\bin\\liblldb.dll"])
+                .unwrap();
+        assert_eq!(
+            args.liblldb_path.as_deref(),
+            Some("C:\\LLVM\\bin\\liblldb.dll")
+        );
+    }
+
+    #[test]
+    fn test_liblldb_path_arg_none_by_default() {
+        let args = Args::try_parse_from(["teledap"]).unwrap();
+        assert_eq!(args.liblldb_path, None);
     }
 }

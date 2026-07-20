@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 
 - E2E test scripts enhanced: 7-phase MCP dispatch verification (22 assertions) covering pre-init rejection, state-aware tool listing, error paths, and codelldb lifecycle; bash subshell bug fixed
 
+### Changed
+
+- Generalize debug adapter layer for multi-adapter support: `dap-client` introduces `AdapterKind` (Codelldb/Gdb) and `AdapterConfig`, replacing the hard-coded `start(path)` with `start(&config)`; `debug-session` gains adapter-aware `launch()` and `configuration_done()` dispatch (fire-and-forget for codelldb, blocking for GDB); `debug-bridge` `start` tool accepts `adapterPath`/`adapterKind`/`adapterArgs` with backward-compatible `codelldbPath` alias; CLI adds `--adapter-path`/`--adapter-kind`/`--adapter-args` flags; all error messages and documentation rewritten to be adapter-agnostic
+
+### Added
+
+- GDB DAP mode support (`--adapter-kind gdb --adapter-args=-i --adapter-args=dap`): adapter-aware `launch`/`configuration_done` behavior, GDB remote debugging via `target` field (codelldb keeps `processCreateCommands`), and runtime-derived default `adapterId` ("gdb" vs "lldb")
+
+### Fixed
+
+- Stderr pipe buffer deadlock prevention: `DapClient::start()` now spawns a background task to drain adapter stderr line-by-line, preventing hang with verbose adapters
+
+### Removed
+
+- `docs/fangan.md` — obsolete Chinese-language design document superseded by the implemented architecture
+
 ### Documentation
 
 - MCP Inspector 手动测试指南：使用官方 `@modelcontextprotocol/inspector` 在浏览器中交互式测试 TeleDAP，覆盖 codelldb 获取、状态门控体验、14 步完整调试流程、错误路径/路径映射/模糊搜索场景、排障表及两种替代测试方式
@@ -17,6 +33,8 @@ All notable changes to this project will be documented in this file.
 - 5 个 OpenOCD MCP 工具（全部 utility，无 SessionState 门控）：`openocd_start`（启动服务器，可选日志目录）、`openocd_stop`（关闭进程）、`openocd_status`（查询运行状态和运行时间）、`openocd_output`（从日志文件读取尾部行，支持增量读取）、`openocd_send`（发送 Tcl 命令并等待响应，可配置超时）
 - OpenOCD 与 DebugSession 采用组合关系：`server.rs` 通过 `Arc<RwLock<Option<OpenOcdClient>>>` 独立持有，启动时默认为 `None`，仅当 AI 调用 `openocd_start` 时创建，纯 codelldb 会话零影响
 - `dap-trace` 中 `TraceSource::OpenOcdTx`/`OpenOcdRx` 变体已预留，OpenOCD 命令/响应可接入追踪系统
+- `liblldbPath` 初始化参数：MCP `initialize` 握手新增可选 `liblldbPath` 字段，CLI 新增 `--liblldb-path` 参数，配置后 spawn codelldb 时自动提取 DLL 所在父目录并注入 `PATH` 环境变量，使 Windows 上 codelldb 能在自定义路径找到 `liblldb.dll`
+- `get_threads` 工具状态门控扩展：从仅 `Halted` 扩展为 `Running` + `Halted`，允许在 debuggee 运行时查询线程 ID 和名称，无需先暂停
 
 ### Added
 

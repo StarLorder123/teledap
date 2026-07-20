@@ -1,15 +1,15 @@
-//! DapClient — manages a codelldb child process and provides high-level DAP operations.
+//! DapClient — manages a debug adapter child process and provides high-level DAP operations.
 //!
 //! # Architecture
 //!
 //! ```text
-//!                     ┌─────────────────────────┐
-//!  DapClient          │   codelldb process       │
-//!                     │                          │
-//!  send_request() ───►│ stdin  (DAP requests)    │
-//!  events ◄───────────│ stdout (responses/events)│
-//!  diagnostics ◄──────│ stderr (diagnostics)     │
-//!                     └─────────────────────────┘
+//!                     ┌─────────────────────────────┐
+//!  DapClient          │   debug adapter process      │
+//!                     │                              │
+//!  send_request() ───►│ stdin  (DAP requests)        │
+//!  events ◄───────────│ stdout (responses/events)    │
+//!  diagnostics ◄──────│ stderr (diagnostics)         │
+//!                     └─────────────────────────────┘
 //! ```
 //!
 //! A background task continuously reads framed DAP messages from stdout
@@ -29,7 +29,7 @@ use dap_types::requests::DapRequest;
 use futures::StreamExt;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_util::codec::FramedRead;
@@ -39,9 +39,30 @@ use crate::error::DapClientError;
 /// Default maximum frame size: 4 MiB.
 pub const DEFAULT_MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
 
-/// Manages a codelldb process and provides typed DAP request/response communication.
+/// The type of debug adapter, controlling behavioral differences
+/// (e.g. whether the `launch` response is deferred).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdapterKind {
+    /// codelldb: defers `launch` response until after `configurationDone`.
+    Codelldb,
+    /// GDB built-in DAP mode (`gdb -i dap`): responds to `launch` promptly.
+    Gdb,
+}
+
+/// Configuration for spawning a debug adapter process.
+#[derive(Debug, Clone)]
+pub struct AdapterConfig {
+    /// Path to the debug adapter binary (e.g. `"codelldb"`, `"gdb"`).
+    pub path: String,
+    /// The type of adapter (controls behavioral branching).
+    pub kind: AdapterKind,
+    /// Command-line arguments to pass to the adapter (e.g. `["-i", "dap"]` for GDB).
+    pub args: Vec<String>,
+}
+
+/// Manages a debug adapter process and provides typed DAP request/response communication.
 pub struct DapClient {
-    /// codelldb child process handle.
+    /// Debug adapter child process handle.
     child: Mutex<Option<Child>>,
 
     /// Stdin writer for sending DAP requests.
@@ -66,12 +87,20 @@ pub struct DapClient {
 
     /// Optional trace handle for recording debug session interactions.
     trace: Option<TraceHandle>,
+
+    /// The kind of adapter currently running (set by `start()`).
+    adapter_kind: Mutex<Option<AdapterKind>>,
+
+    /// Optional path to the liblldb shared library.
+    /// When set, `start()` prepends its parent directory to the `PATH`
+    /// environment variable of the spawned adapter process.
+    lib_lldb_path: Mutex<Option<String>>,
 }
 
 impl DapClient {
     /// Creates a new `DapClient` with no running process.
     ///
-    /// Call `start()` to spawn codelldb and begin communication.
+    /// Call `start()` to spawn a debug adapter and begin communication.
     pub fn new(max_frame_size: usize) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         Self {
@@ -83,6 +112,8 @@ impl DapClient {
             event_rx: Mutex::new(event_rx),
             max_frame_size,
             trace: None,
+            adapter_kind: Mutex::new(None),
+            lib_lldb_path: Mutex::new(None),
         }
     }
 
@@ -101,45 +132,99 @@ impl DapClient {
             event_rx: Mutex::new(event_rx),
             max_frame_size,
             trace: Some(trace),
+            adapter_kind: Mutex::new(None),
+            lib_lldb_path: Mutex::new(None),
         }
     }
 
-    /// Returns true if the codelldb process has been started.
+    /// Returns true if the debug adapter process has been started.
     pub async fn is_running(&self) -> bool {
         self.child.lock().await.is_some()
     }
 
+    /// Returns the adapter kind, if the adapter has been started.
+    pub async fn adapter_kind(&self) -> Option<AdapterKind> {
+        *self.adapter_kind.lock().await
+    }
+
+    /// Set the path to the liblldb shared library.
+    ///
+    /// Call this before `start()` to make the DLL available to codelldb
+    /// at adapter-spawn time (prepended to the child process PATH).
+    pub async fn set_lib_lldb_path(&self, path: Option<String>) {
+        *self.lib_lldb_path.lock().await = path;
+    }
+
+    /// Returns the currently configured liblldb path, if any.
+    pub async fn lib_lldb_path(&self) -> Option<String> {
+        self.lib_lldb_path.lock().await.clone()
+    }
+
     // ── Process Lifecycle ─────────────────────────────────────────
 
-    /// Spawns codelldb as a child process with piped stdio.
+    /// Spawns a debug adapter as a child process with piped stdio.
     ///
     /// A background task is launched to continuously read and frame DAP messages
     /// from stdout. Responses are routed to the matching `send_request` waiter via
     /// `request_seq`, and events are published to the event channel.
-    pub async fn start(&self, codelldb_path: &str) -> Result<(), DapClientError> {
+    ///
+    /// A second background task consumes stderr line-by-line to prevent
+    /// pipe buffer deadlock with verbose adapters.
+    pub async fn start(&self, config: &AdapterConfig) -> Result<(), DapClientError> {
         if self.is_running().await {
             return Err(DapClientError::SpawnFailed(
-                "codelldb is already running".into(),
+                "adapter is already running".into(),
             ));
         }
 
-        let mut child = Command::new(codelldb_path)
-            .stdin(std::process::Stdio::piped())
+        let mut cmd = Command::new(&config.path);
+        cmd.stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| {
-                DapClientError::SpawnFailed(format!("Failed to spawn '{}': {}", codelldb_path, e))
-            })?;
+            .kill_on_drop(true);
 
-        let stdout = child.stdout.take().ok_or_else(|| {
-            DapClientError::SpawnFailed("codelldb stdout is not available".into())
+        // ── liblldb PATH injection ──────────────────────────────────
+        // On Windows, codelldb needs liblldb.dll in its DLL search path.
+        // Prepending the DLL's parent directory to PATH is the most
+        // portable way to make it findable without registry changes.
+        if let Some(ref lldb_path) = *self.lib_lldb_path.lock().await {
+            if let Some(parent) = std::path::Path::new(lldb_path).parent() {
+                let separator = if cfg!(windows) { ";" } else { ":" };
+                let existing_path = std::env::var("PATH").unwrap_or_default();
+                let new_path = format!("{}{}{}", parent.display(), separator, existing_path);
+                cmd.env("PATH", &new_path);
+                tracing::info!(
+                    liblldb_dir = %parent.display(),
+                    "prepended liblldb directory to adapter PATH"
+                );
+            } else {
+                tracing::warn!(
+                    liblldb_path = %lldb_path,
+                    "cannot extract parent directory from liblldb path; skipping PATH injection"
+                );
+            }
+        }
+
+        if !config.args.is_empty() {
+            cmd.args(&config.args);
+        }
+
+        let mut child = cmd.spawn().map_err(|e| {
+            DapClientError::SpawnFailed(format!("Failed to spawn '{}': {}", config.path, e))
         })?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| DapClientError::SpawnFailed("adapter stdout is not available".into()))?;
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| DapClientError::SpawnFailed("codelldb stdin is not available".into()))?;
+            .ok_or_else(|| DapClientError::SpawnFailed("adapter stdin is not available".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| DapClientError::SpawnFailed("adapter stderr is not available".into()))?;
 
         // Share the pending_requests map with the background reader task
         let pending_clone = self.pending_requests.clone();
@@ -183,8 +268,7 @@ impl DapClient {
                         let _ = event_tx.send(event);
                     }
                     Ok(ProtocolMessage::Request(_)) => {
-                        // We don't expect requests from the debug adapter
-                        // (reverse requests are typically not used by codelldb)
+                        // Reverse requests are not currently handled by TeleDAP
                         tracing::warn!("Unexpected request from debug adapter");
                     }
                     Err(e) => {
@@ -193,17 +277,31 @@ impl DapClient {
                     }
                 }
             }
-            tracing::info!("codelldb stdout reader exited.");
+            tracing::info!("adapter stdout reader exited.");
+        });
+
+        // Spawn background stderr consumer to prevent pipe buffer deadlock
+        tokio::spawn(async move {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                tracing::debug!(target: "adapter_stderr", "{}", line);
+            }
+            tracing::debug!("adapter stderr reader exited.");
         });
 
         *self.stdin.lock().await = Some(stdin);
         *self.child.lock().await = Some(child);
+        *self.adapter_kind.lock().await = Some(config.kind);
 
-        tracing::info!(path = %codelldb_path, "codelldb started");
+        tracing::info!(path = %config.path, kind = ?config.kind, "adapter started");
         if let Some(ref t) = self.trace {
             t.trace_internal(
-                "codelldb_started",
-                Some(serde_json::json!({"path": codelldb_path})),
+                "adapter_started",
+                Some(serde_json::json!({
+                    "path": config.path,
+                    "kind": format!("{:?}", config.kind),
+                })),
             );
         }
         Ok(())
@@ -258,7 +356,7 @@ impl DapClient {
             let mut stdin_guard = self.stdin.lock().await;
             let stdin = stdin_guard
                 .as_mut()
-                .ok_or_else(|| DapClientError::NotConnected("codelldb not started".into()))?;
+                .ok_or_else(|| DapClientError::NotConnected("adapter not started".into()))?;
 
             let buf = dap_codec::encode_to_bytes(&msg)
                 .map_err(|e| DapClientError::DapProtocol(e.to_string()))?;
@@ -301,7 +399,7 @@ impl DapClient {
                 let mut pending = self.pending_requests.lock().await;
                 pending.remove(&seq);
                 Err(DapClientError::ProcessExited(
-                    "codelldb stdout stream closed before response".into(),
+                    "adapter stdout stream closed before response".into(),
                 ))
             }
         }
@@ -310,7 +408,8 @@ impl DapClient {
     /// Send a DAP request without waiting for a response (fire-and-forget).
     ///
     /// This is useful for requests like `configurationDone` where the response
-    /// has no meaningful body, or when you want to handle the response asynchronously.
+    /// has no meaningful body, or for adapters (like codelldb) that defer
+    /// their response until after `configurationDone`.
     pub async fn send_request_nb<Req>(
         &self,
         arguments: Req::Arguments,
@@ -332,7 +431,7 @@ impl DapClient {
         let mut stdin_guard = self.stdin.lock().await;
         let stdin = stdin_guard
             .as_mut()
-            .ok_or_else(|| DapClientError::NotConnected("codelldb not started".into()))?;
+            .ok_or_else(|| DapClientError::NotConnected("adapter not started".into()))?;
 
         let buf = dap_codec::encode_to_bytes(&msg)
             .map_err(|e| DapClientError::DapProtocol(e.to_string()))?;
@@ -374,7 +473,7 @@ impl DapClient {
 
     // ── Shutdown ──────────────────────────────────────────────────
 
-    /// Disconnect from the debuggee and shut down codelldb.
+    /// Disconnect from the debuggee and shut down the debug adapter.
     ///
     /// Sends a `disconnect` request (best-effort), then kills the child process.
     pub async fn shutdown(&self) -> Result<(), DapClientError> {
@@ -393,8 +492,9 @@ impl DapClient {
             let _ = child.kill().await;
         }
         *child_guard = None;
+        *self.adapter_kind.lock().await = None;
 
-        tracing::info!("codelldb shut down.");
+        tracing::info!("debug adapter shut down.");
         Ok(())
     }
 }
@@ -408,5 +508,26 @@ mod tests {
         let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
         // No tokio runtime needed for construction
         assert_eq!(client.seq.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_set_lib_lldb_path() {
+        let client = DapClient::new(DEFAULT_MAX_FRAME_SIZE);
+
+        // Initially None
+        assert_eq!(client.lib_lldb_path().await, None);
+
+        // Set and verify
+        client
+            .set_lib_lldb_path(Some("C:\\LLVM\\bin\\liblldb.dll".into()))
+            .await;
+        assert_eq!(
+            client.lib_lldb_path().await.as_deref(),
+            Some("C:\\LLVM\\bin\\liblldb.dll")
+        );
+
+        // Clear and verify
+        client.set_lib_lldb_path(None).await;
+        assert_eq!(client.lib_lldb_path().await, None);
     }
 }

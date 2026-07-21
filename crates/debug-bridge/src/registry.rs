@@ -109,6 +109,9 @@ impl ToolRegistry {
             "set_function_breakpoints" => {
                 handlers::breakpoint::handle_set_function_breakpoints(session, params).await
             }
+            "list_breakpoints" => {
+                handlers::breakpoint::handle_list_breakpoints(session, params).await
+            }
 
             // Introspection
             "get_threads" => handlers::inspect::handle_get_threads(session, params).await,
@@ -190,6 +193,10 @@ mod tests {
         assert!(names.contains(&"evaluate"));
         assert!(names.contains(&"set_variable"));
         assert!(names.contains(&"assemble_context"));
+        // Breakpoint tools
+        assert!(names.contains(&"set_breakpoints"));
+        assert!(names.contains(&"set_function_breakpoints"));
+        assert!(names.contains(&"list_breakpoints"));
         // Utility tools always present
         assert!(names.contains(&"get_state"));
         // Should NOT contain pause (only in Running)
@@ -204,6 +211,8 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"pause"));
         assert!(names.contains(&"set_breakpoints"));
+        assert!(names.contains(&"set_function_breakpoints"));
+        assert!(names.contains(&"list_breakpoints"));
         assert!(names.contains(&"shutdown"));
         assert!(names.contains(&"get_threads"));
         // Should NOT contain deep introspection tools while running

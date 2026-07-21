@@ -39,6 +39,7 @@
 //! }
 //! ```
 
+pub mod breakpoints;
 pub mod cache;
 pub mod context;
 pub mod error;
@@ -49,6 +50,7 @@ pub mod state;
 pub mod variables;
 
 // Re-export key types for convenience
+pub use breakpoints::{BreakpointCache, CachedBreakpoint};
 pub use cache::{VariableHandleCache, VariableHandleEntry};
 pub use context::{ContextChain, FrameContext, ScopeContext, ThreadContext};
 pub use dap_client::{AdapterConfig, AdapterKind};

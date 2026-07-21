@@ -6,7 +6,7 @@ use dap_trace::TraceHandle;
 use dap_types::{
     base::Event,
     capabilities::Capabilities,
-    events::{ContinuedEventBody, ExitedEventBody, StoppedEventBody},
+    events::{BreakpointEventBody, ContinuedEventBody, ExitedEventBody, StoppedEventBody},
     requests::{
         AttachRequest, AttachRequestArguments, ConfigurationDoneRequest, ContinueArguments,
         ContinueRequest, EvaluateArguments, EvaluateRequest, InitializeRequest,
@@ -21,8 +21,12 @@ use dap_types::{
         ContinueResponse, EvaluateResponse, SetBreakpointsResponse, SetFunctionBreakpointsResponse,
         SetVariableResponse,
     },
-    types::{Scope, StackFrame, Thread, Variable},
+    types::{
+        Breakpoint, FunctionBreakpoint, Scope, SourceBreakpoint, StackFrame, Thread, Variable,
+    },
 };
+
+use crate::breakpoints::{BreakpointCache, CachedBreakpoint};
 use tokio::sync::{watch, RwLock};
 use tracing::{debug, info, warn};
 
@@ -64,6 +68,8 @@ pub struct DebugSession {
     /// Variable handle cache: variable name → variablesReference mapping.
     /// Auto-invalidated when execution resumes.
     variable_cache: VariableHandleCache,
+    /// Breakpoint cache: client-side tracking of set breakpoints.
+    breakpoint_cache: BreakpointCache,
     /// The kind of debug adapter in use (set by `start()`).
     /// Controls behavioral branching for launch/configuration_done.
     adapter_kind: RwLock<Option<AdapterKind>>,
@@ -83,6 +89,7 @@ impl DebugSession {
             state_tx,
             path_mapper: RwLock::new(PathMapper::new()),
             variable_cache: VariableHandleCache::new(),
+            breakpoint_cache: BreakpointCache::new(),
             adapter_kind: RwLock::new(None),
         }
     }
@@ -351,6 +358,7 @@ impl DebugSession {
         if current != SessionState::Disconnected {
             self.transition_to(SessionState::Disconnected, "shutdown")
                 .await?;
+            self.breakpoint_cache.clear().await;
         }
         Ok(())
     }
@@ -452,10 +460,15 @@ impl DebugSession {
         args: SetBreakpointsArguments,
     ) -> Result<SetBreakpointsResponse, DebugSessionError> {
         self.gate("set_breakpoints").await?;
+        let source_path = args.source.path.clone().unwrap_or_default();
+        let request_breakpoints = args.breakpoints.clone().unwrap_or_default();
         let resp = self
             .client
             .send_request::<SetBreakpointsRequest>(args)
             .await?;
+        self.breakpoint_cache
+            .update_source_breakpoints(&source_path, &request_breakpoints, &resp.breakpoints)
+            .await;
         Ok(resp)
     }
 
@@ -465,11 +478,52 @@ impl DebugSession {
         args: SetFunctionBreakpointsArguments,
     ) -> Result<SetFunctionBreakpointsResponse, DebugSessionError> {
         self.gate("set_function_breakpoints").await?;
+        let request_breakpoints = args.breakpoints.clone();
         let resp = self
             .client
             .send_request::<SetFunctionBreakpointsRequest>(args)
             .await?;
+        self.breakpoint_cache
+            .update_function_breakpoints(&request_breakpoints, &resp.breakpoints)
+            .await;
         Ok(resp)
+    }
+
+    /// Update the cached source breakpoints after a successful `setBreakpoints` call.
+    pub async fn update_source_breakpoints(
+        &self,
+        source_path: &str,
+        request: &[SourceBreakpoint],
+        response: &[Breakpoint],
+    ) {
+        self.breakpoint_cache
+            .update_source_breakpoints(source_path, request, response)
+            .await;
+    }
+
+    /// Update the cached function breakpoints after a successful `setFunctionBreakpoints` call.
+    pub async fn update_function_breakpoints(
+        &self,
+        request: &[FunctionBreakpoint],
+        response: &[Breakpoint],
+    ) {
+        self.breakpoint_cache
+            .update_function_breakpoints(request, response)
+            .await;
+    }
+
+    /// List all breakpoints currently tracked by TeleDAP.
+    ///
+    /// Stored absolute source paths are reverse-mapped to AI-relative alias
+    /// form when a matching alias is registered.
+    pub async fn list_breakpoints(&self) -> Vec<CachedBreakpoint> {
+        let mut breakpoints = self.breakpoint_cache.list().await;
+        for bp in &mut breakpoints {
+            if let Some(abs) = &bp.source_path {
+                bp.source_path = self.reverse_path(abs).await.or_else(|| Some(abs.clone()));
+            }
+        }
+        breakpoints
     }
 
     // ── Introspection (Halted only) ───────────────────────────────────────────
@@ -650,6 +704,7 @@ impl DebugSession {
                 if current != SessionState::Disconnected {
                     self.transition_to(SessionState::Disconnected, "event:terminated")
                         .await?;
+                    self.breakpoint_cache.clear().await;
                 }
                 Ok(true)
             }
@@ -668,8 +723,38 @@ impl DebugSession {
                 if current != SessionState::Disconnected {
                     self.transition_to(SessionState::Disconnected, "event:exited")
                         .await?;
+                    self.breakpoint_cache.clear().await;
                 }
                 Ok(true)
+            }
+            "breakpoint" => {
+                let body: BreakpointEventBody = serde_json::from_value(
+                    event.body.clone().unwrap_or_default(),
+                )
+                .unwrap_or_else(|e| {
+                    warn!("Failed to deserialize breakpoint event body: {e}");
+                    BreakpointEventBody {
+                        reason: dap_types::enums::BreakpointReason::Changed,
+                        breakpoint: Breakpoint {
+                            id: None,
+                            verified: false,
+                            message: None,
+                            source: None,
+                            line: None,
+                            column: None,
+                            end_line: None,
+                            end_column: None,
+                            instruction_reference: None,
+                            offset: None,
+                            reason: None,
+                        },
+                    }
+                });
+
+                if body.breakpoint.id.is_some() {
+                    self.breakpoint_cache.update_by_id(&body.breakpoint).await;
+                }
+                Ok(false) // passthrough; callers may also want to handle this
             }
             "thread" => {
                 // Track thread starts/exits but don't change top-level state

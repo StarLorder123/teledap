@@ -13,6 +13,8 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - GDB DAP mode support (`--adapter-kind gdb --adapter-args=-i --adapter-args=dap`): adapter-aware `launch`/`configuration_done` behavior, GDB remote debugging via `target` field (codelldb keeps `processCreateCommands`), and runtime-derived default `adapterId` ("gdb" vs "lldb")
+- `list_breakpoints` MCP tool: client-side breakpoint cache tracking source/function breakpoints, refreshed on `set_breakpoints`/`set_function_breakpoints` and DAP `breakpoint` events, cleared on disconnect/termination
+- `get_state` detail parameter: opt-in `"simple"` mode omits the large `capabilities` object; default `"full"` preserves existing behavior
 
 ### Fixed
 

@@ -246,11 +246,25 @@ pub async fn handle_shutdown(
 
 // ── get_state (utility) ─────────────────────────────────────────────────
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetStateParams {
+    #[serde(default)]
+    detail: Option<String>,
+}
+
 pub async fn handle_get_state(
     session: &DebugSession,
-    _params: serde_json::Value,
+    params: serde_json::Value,
 ) -> Result<CallToolResult, BridgeError> {
     use debug_session::ToolAvailability;
+
+    let p: GetStateParams =
+        serde_json::from_value(params).map_err(|e| BridgeError::InvalidParams {
+            tool: "get_state".into(),
+            message: e.to_string(),
+        })?;
+    let simple = p.detail.as_deref() == Some("simple");
 
     let state = session.current_state().await;
     let available_tools: Vec<String> = ToolAvailability::operations_for_state(state)
@@ -262,12 +276,20 @@ pub async fn handle_get_state(
         .map(|t| t.name)
         .collect();
 
-    let info = serde_json::json!({
-        "state": format!("{:?}", state),
-        "available_operations": available_tools,
-        "available_tools": all_available,
-        "capabilities": session.capabilities().await,
-    });
+    let info = if simple {
+        serde_json::json!({
+            "state": format!("{:?}", state),
+            "available_operations": available_tools,
+            "available_tools": all_available,
+        })
+    } else {
+        serde_json::json!({
+            "state": format!("{:?}", state),
+            "available_operations": available_tools,
+            "available_tools": all_available,
+            "capabilities": session.capabilities().await,
+        })
+    };
 
     text_result(&info)
 }

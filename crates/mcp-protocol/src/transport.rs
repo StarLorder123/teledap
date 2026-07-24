@@ -50,7 +50,7 @@ impl McpServer {
     }
 
     /// Parse a single JSON line into an IncomingMessage.
-    fn parse_incoming(json_str: &str) -> Result<IncomingMessage, McpError> {
+    pub fn parse_incoming(json_str: &str) -> Result<IncomingMessage, McpError> {
         let val: serde_json::Value =
             serde_json::from_str(json_str).map_err(|e| McpError::parse_error(e.to_string()))?;
 
@@ -129,6 +129,13 @@ impl McpServer {
             })
         };
         self.write_line(&response).await
+    }
+
+    /// Write an arbitrary JSON-RPC value to stdout and flush.
+    ///
+    /// Used for server-initiated notifications over stdio.
+    pub async fn write_raw(&mut self, value: &serde_json::Value) -> Result<(), McpError> {
+        self.write_line(value).await
     }
 
     /// Internal: serialize a JSON value to a single line and write + flush.

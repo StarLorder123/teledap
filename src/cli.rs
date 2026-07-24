@@ -24,7 +24,7 @@ use debug_session::{DebugSession, SessionState};
 /// TeleDAP — Debug Adapter Protocol client for AI-driven debugging.
 #[derive(Parser, Debug)]
 #[command(name = "teledap", version, about)]
-struct Args {
+pub struct Args {
     /// Path to the debug adapter binary (e.g. "codelldb" or "gdb").
     #[arg(long, default_value = "codelldb")]
     adapter_path: String,
@@ -66,7 +66,15 @@ struct Args {
 
     /// Force CLI mode (skips stdin terminal detection).
     #[arg(long, default_value = "false")]
-    cli: bool,
+    pub cli: bool,
+
+    /// Run as an HTTP/SSE MCP server instead of stdio.
+    #[arg(long, default_value = "false")]
+    pub http: bool,
+
+    /// Port for the HTTP/SSE MCP server.
+    #[arg(long, default_value = "8080")]
+    pub port: u16,
 
     /// Enable verbose logging.
     #[arg(short, long, default_value = "false")]
@@ -77,9 +85,7 @@ struct Args {
     log_dir: Option<String>,
 }
 
-pub async fn run() {
-    let args = Args::parse();
-
+pub async fn run(args: Args) {
     // Resolve adapter path (prefer --adapter-path, fall back to deprecated --codelldb-path)
     let adapter_path = if !args.codelldb_path.is_empty() {
         tracing::warn!("--codelldb-path is deprecated, use --adapter-path instead");

@@ -30,10 +30,13 @@ cargo run -- --codelldb-path /path/to/codelldb --elf-path ./app.elf -v
 # Run MCP server (pipe-in mode — auto-detected when stdin is not a terminal)
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | cargo run --quiet --
 
+# Run MCP server over HTTP/SSE (multi-client shared session)
+cargo run -- --http --port 8080
+
 # Force CLI mode when stdin is a pipe (e.g. PowerShell)
 cargo run -- --cli --codelldb-path /path/to/codelldb --elf-path ./app.elf
 
-# E2E MCP protocol smoke test
+# E2E MCP protocol smoke test (stdio mode)
 ./test_mcp_e2e.sh                   # Unix/Mac
 powershell -File test_mcp_e2e.ps1   # Windows
 ```
@@ -41,7 +44,7 @@ powershell -File test_mcp_e2e.ps1   # Windows
 ## Architecture
 
 ```
-teledap (root binary — auto-detect: pipe→MCP server, terminal→CLI)
+teledap (root binary — auto-detect: --http→HTTP/SSE, pipe→MCP stdio server, terminal→CLI)
   ├── debug-bridge        — MCP→DAP translation: ToolRegistry, 24 tool handlers, state gating
   │   ├── mcp-protocol    — JSON-RPC 2.0 types, line-delimited stdio transport
   │   ├── debug-session   — state machine, context-chain, path mapping, variable cache
@@ -57,18 +60,19 @@ teledap (root binary — auto-detect: pipe→MCP server, terminal→CLI)
 
 **Crate dependency direction:** `teledap → {debug-bridge, mcp-protocol, debug-session, dap-client}`. `dap-types` is the leaf crate with zero internal dependencies; every other crate depends on it.
 
-**Dual-mode binary:** `src/main.rs` detects mode automatically — pipe stdin → MCP server (`src/server.rs`), terminal stdin → CLI (`src/cli.rs`). Use `--cli` to force CLI when piped.
+**Tri-mode binary:** `src/main.rs` selects mode in this order: `--http` → HTTP/SSE MCP server (`src/http_server.rs`), pipe stdin → MCP stdio server (`src/server.rs`), terminal stdin → CLI (`src/cli.rs`). Use `--cli` to force CLI when piped. The HTTP/SSE server exposes the same tool surface as the stdio server but allows multiple clients to share a single `DebugSession`/`OpenOcdClient`.
 
 ## Key Design Patterns
 
-### Two wire protocols
+### Three wire protocols
 
 | Layer | Transport | Framing |
 |-------|-----------|---------|
-| **MCP** (AI ↔ TeleDAP) | stdin/stdout | Line-delimited JSON (`\n` terminated) |
+| **MCP stdio** (AI ↔ TeleDAP) | stdin/stdout | Line-delimited JSON (`\n` terminated) |
+| **MCP HTTP/SSE** (AI ↔ TeleDAP) | HTTP 1.1 | `GET /sse` returns event stream; `POST /message` accepts JSON-RPC |
 | **DAP** (TeleDAP ↔ codelldb) | child process stdin/stdout | `Content-Length: <N>\r\n\r\n<JSON body>` |
 
-`McpServer` reads lines via `BufReader::read_line()`. `DapCodec` implements `tokio_util::codec::Decoder<Item=ProtocolMessage>` handling partial reads, sticky packets, oversized frames (max 4 MiB), and header size limits (4 KiB).
+`McpServer` reads lines via `BufReader::read_line()`. The HTTP/SSE transport in `src/http_server.rs` uses axum: each SSE connection gets a unique `session_id`; all connections share one `DebugSession`. `DapCodec` implements `tokio_util::codec::Decoder<Item=ProtocolMessage>` handling partial reads, sticky packets, oversized frames (max 4 MiB), and header size limits (4 KiB).
 
 ### ProtocolMessage — serde internal tagging
 
@@ -119,6 +123,29 @@ Five states: `Disconnected → Connected → Initialized → {Running ↔ Halted
 
 `handle_event()` also triggers variable cache invalidation (Halted→Running/Disconnected) and `watch::channel` broadcasts.
 
+### HTTP/SSE MCP transport
+
+`src/http_server.rs` implements the MCP 2025-03-26 HTTP/SSE convention:
+
+- `GET /sse` opens an SSE stream. The first event is `event: endpoint` with `data: /message?session_id=<uuid>`.
+- `POST /message?session_id=<uuid>` accepts a JSON-RPC request. The server returns `202 Accepted` immediately; the actual response is pushed to that client's SSE stream as `event: message`.
+- Every SSE connection gets a unique MCP client session id, but all connections share the same `DebugSession` and `OpenOcdClient`.
+- When the debug session state changes, the server broadcasts `notifications/tools/list_changed` to all connected clients.
+
+Example with `curl`:
+
+```bash
+# Terminal 1: connect SSE and capture the endpoint URL
+curl -N http://localhost:8080/sse
+# → event: endpoint
+# → data: /message?session_id=550e8400-e29b-41d4-a716-446655440000
+
+# Terminal 2: send initialize
+curl -X POST "http://localhost:8080/message?session_id=550e8400-e29b-41d4-a716-446655440000" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
+```
+
 ### Fire-and-forget pattern for launch
 
 `launch` and `configurationDone` use `send_request_nb()`. codelldb defers the `launch` response until `configurationDone` is received, so awaiting `launch` in the traditional `send_request()` + oneshot pattern would deadlock.
@@ -150,6 +177,7 @@ All dependency versions are declared in the root `Cargo.toml` `[workspace.depend
 - **Unit tests** are inline `#[cfg(test)] mod tests` blocks in each source file — spread across 27 files.
 - **Integration tests** live in `crates/dap-client/tests/`, `crates/debug-session/tests/`, and `crates/debug-bridge/tests/`. They spawn a real codelldb process and use a `codelldb_available()` env probe that gracefully skips when codelldb is absent. Every async test is wrapped in `tokio::time::timeout()` to prevent hangs.
 - **MCP E2E scripts** (`test_mcp_e2e.sh`, `test_mcp_e2e.ps1`) pipe 7 phases of JSON-RPC messages into the binary and assert every response — no test framework needed.
+- **HTTP/SSE tests** live in `src/http_server.rs` and exercise the axum router via `ServiceExt::oneshot`, including the `initialize` handshake over SSE.
 - **test_debuggee** (`test_debuggee/main.c`) is a simple C program compiled for integration tests — tests locate it relative to workspace root or `CARGO_MANIFEST_DIR`.
 - New dap-codec tests go in `crates/dap-codec/src/lib.rs` in the existing `mod tests` block; use `make_codec()` and `make_wire()` / `make_wire_value()` helpers.
 - New state machine tests go in `crates/debug-session/src/state.rs` and `gating.rs`.

@@ -113,6 +113,8 @@ pub struct PropertySchema {
     pub description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub items: Option<Box<PropertySchema>>,
+    #[serde(rename = "enum", skip_serializing_if = "Option::is_none")]
+    pub enum_values: Option<Vec<String>>,
 }
 
 impl JsonSchema {
@@ -153,6 +155,7 @@ impl PropertySchema {
             prop_type: "string".to_string(),
             description: description.to_string(),
             items: None,
+            enum_values: None,
         }
     }
 
@@ -161,6 +164,7 @@ impl PropertySchema {
             prop_type: "integer".to_string(),
             description: description.to_string(),
             items: None,
+            enum_values: None,
         }
     }
 
@@ -169,6 +173,7 @@ impl PropertySchema {
             prop_type: "boolean".to_string(),
             description: description.to_string(),
             items: None,
+            enum_values: None,
         }
     }
 
@@ -180,7 +185,9 @@ impl PropertySchema {
                 prop_type: item_type.to_string(),
                 description: String::new(),
                 items: None,
+                enum_values: None,
             })),
+            enum_values: None,
         }
     }
 
@@ -192,8 +199,16 @@ impl PropertySchema {
                 prop_type: item_type.to_string(),
                 description: String::new(),
                 items: None,
+                enum_values: None,
             })),
+            enum_values: None,
         }
+    }
+
+    /// Restrict a string property to a fixed set of allowed values.
+    pub fn with_enum(mut self, values: &[&str]) -> Self {
+        self.enum_values = Some(values.iter().map(|v| v.to_string()).collect());
+        self
     }
 }
 

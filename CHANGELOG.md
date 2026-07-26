@@ -12,7 +12,10 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- HTTP/SSE MCP server mode: `cargo run -- --http --port 8080` exposes the same tool surface over HTTP/SSE, allowing multiple clients to share a single `DebugSession`/`OpenOcdClient`; follows MCP 2025-03-26 convention (`GET /sse` returns a unique `session_id` endpoint, `POST /message` returns 202 and pushes responses via SSE); broadcasts `notifications/tools/list_changed` on state transitions
 - GDB DAP mode support (`--adapter-kind gdb --adapter-args=-i --adapter-args=dap`): adapter-aware `launch`/`configuration_done` behavior, GDB remote debugging via `target` field (codelldb keeps `processCreateCommands`), and runtime-derived default `adapterId` ("gdb" vs "lldb")
+- `list_breakpoints` MCP tool: client-side breakpoint cache tracking source/function breakpoints, refreshed on `set_breakpoints`/`set_function_breakpoints` and DAP `breakpoint` events, cleared on disconnect/termination
+- `get_state` detail parameter: opt-in `"simple"` mode omits the large `capabilities` object; default `"full"` preserves existing behavior
 
 ### Fixed
 
@@ -24,6 +27,8 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+- AI Agent 集成指南：面向 AI Agent 开发者和用户的完整集成文档，涵盖 stdio 与 HTTP/SSE 两种 MCP 接入模式、配置步骤、包装脚本示例、自建 Agent Python 代码示例、AI 系统提示模板、生命周期状态机图、路径映射机制、OpenOCD 嵌入式调试流程及 5 个常见问题解答
+- TeleDAP 推广计划：按优先级排序列出推广所需工作，包括 README 更新、英文文档、示例仓库与教程、GitHub Releases/包管理器分发、AI 客户端集成验证矩阵、安全与远程化增强、社区推广渠道（awesome-mcp-servers/Reddit/HN/知乎）、生态扩展（VS Code 扩展/高级功能）及 5 阶段推广里程碑建议
 - MCP Inspector 手动测试指南：使用官方 `@modelcontextprotocol/inspector` 在浏览器中交互式测试 TeleDAP，覆盖 codelldb 获取、状态门控体验、14 步完整调试流程、错误路径/路径映射/模糊搜索场景、排障表及两种替代测试方式
 - MCP-DAP 协议桥接架构文档：覆盖项目整体架构、crate 依赖关系、MCP/DAP 协议层、桥接转换机制、24 个工具映射、事件流、会话状态机、变量缓存与路径映射、完整数据流示例
 

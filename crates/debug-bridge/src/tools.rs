@@ -1,7 +1,7 @@
 //! MCP tool definitions: names, titles, descriptions, and JSON input schemas.
 //!
-//! Defines 24 tools: 20 gated debug operations (matching `ToolAvailability`
-//! operations) plus 4 utility tools with no state gating.
+//! Defines 30 tools: 21 gated debug operations (matching `ToolAvailability`
+//! operations) plus 4 utility tools with no state gating, plus 5 OpenOCD tools.
 //!
 //! Each tool's `inputSchema` is built from `JsonSchema` / `PropertySchema`
 //! helpers from `mcp-protocol`.
@@ -38,7 +38,7 @@ fn object_of(desc: &str, item_type: &str) -> PropertySchema {
 
 // ── Tool list ────────────────────────────────────────────────────────────
 
-/// Returns the complete list of 24 tools for `tools/list`.
+/// Returns the complete list of 30 tools for `tools/list`.
 pub fn all_tools() -> Vec<Tool> {
     vec![
         // ═══════════════════════════════════════════════════════════════
@@ -137,7 +137,7 @@ pub fn all_tools() -> Vec<Tool> {
         },
 
         // ═══════════════════════════════════════════════════════════════
-        // Breakpoint tools (2 gated)
+        // Breakpoint tools (3 gated)
         // ═══════════════════════════════════════════════════════════════
         Tool {
             name: "set_breakpoints".into(),
@@ -155,6 +155,12 @@ pub fn all_tools() -> Vec<Tool> {
                 .with_required("names", array_of("Function names to break on", "string"))
                 .with_optional("condition", string("Optional conditional expression"))
                 .with_optional("hitCondition", string("Optional hit count condition (e.g. \">5\")")),
+        },
+        Tool {
+            name: "list_breakpoints".into(),
+            title: "List breakpoints".into(),
+            description: "List all breakpoints currently known to TeleDAP, including source breakpoints and function breakpoints with their verification status, locations, and conditions.".into(),
+            input_schema: object_schema(),
         },
 
         // ═══════════════════════════════════════════════════════════════
@@ -234,8 +240,9 @@ pub fn all_tools() -> Vec<Tool> {
         Tool {
             name: "get_state".into(),
             title: "Get session state".into(),
-            description: "Return the current session state, halt details, and list of available tools for the current state. Always available.".into(),
-            input_schema: object_schema(),
+            description: "Return the current session state, halt details, and list of available tools for the current state. Use 'detail' parameter to control response size. Always available.".into(),
+            input_schema: object_schema()
+                .with_optional("detail", string("Response detail level: 'simple' (state, operations, tools only) or 'full' (includes capabilities). Default is 'full'.").with_enum(&["simple", "full"])),
         },
         Tool {
             name: "register_path_alias".into(),
@@ -318,6 +325,7 @@ pub fn tool_operation(name: &str) -> Option<&'static str> {
         // ── Breakpoints ───────────────────────────────────────────────
         "set_breakpoints" => Some("set_breakpoints"),
         "set_function_breakpoints" => Some("set_function_breakpoints"),
+        "list_breakpoints" => Some("list_breakpoints"),
         // ── Introspection ─────────────────────────────────────────────
         "get_threads" => Some("get_threads"),
         "get_stack_trace" => Some("get_stack_trace"),
@@ -350,7 +358,7 @@ mod tests {
     #[test]
     fn test_all_tools_count() {
         let tools = all_tools();
-        assert_eq!(tools.len(), 29, "Should be exactly 29 tools");
+        assert_eq!(tools.len(), 30, "Should be exactly 30 tools");
     }
 
     #[test]
@@ -391,7 +399,7 @@ mod tests {
             .iter()
             .filter(|t| tool_operation(&t.name).is_some())
             .count();
-        assert_eq!(gated_count, 20, "Should have exactly 20 gated tools");
+        assert_eq!(gated_count, 21, "Should have exactly 21 gated tools");
     }
 
     #[test]

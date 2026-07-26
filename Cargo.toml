@@ -8,7 +8,11 @@ description = "MCP Server bridging AI assistants to embedded hardware debugging 
 
 [dependencies]
 tokio.workspace = true
+tokio-stream.workspace = true
+axum.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+uuid.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
@@ -20,6 +24,9 @@ debug-session.workspace = true
 mcp-protocol.workspace = true
 debug-bridge.workspace = true
 openocd-client.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 
 [workspace]
 resolver = "2"
@@ -45,6 +52,10 @@ authors = ["JinHaoLee"]
 # --- Async Runtime ---
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# --- HTTP Server ---
+axum = { version = "0.7", features = ["tokio"] }
 
 # --- Serialization ---
 serde = { version = "1", features = ["derive"] }

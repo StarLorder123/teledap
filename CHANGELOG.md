@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 - E2E test scripts enhanced: 7-phase MCP dispatch verification (22 assertions) covering pre-init rejection, state-aware tool listing, error paths, and codelldb lifecycle; bash subshell bug fixed
 
+### Documentation
+
+- Update README.md to reflect current feature set: 30 MCP tools, stdio + HTTP/SSE dual transport, OpenOCD integration, new CLI options (`--adapter-path`, `--adapter-kind`, `--adapter-args`, `--http`, `--port`, `--liblldb-path`)
+- Add `README.zh.md`: complete Chinese translation of the project README
+- Add `docs/AI_Agent_Integration_Guide.md`: English version of the AI Agent integration guide covering stdio/HTTP/SSE modes, lifecycle, path mapping, OpenOCD, and FAQ
+- Add `docs/prompts/` sample directory with ready-to-use system prompt templates: `system-prompt.md`, `claude-desktop-prompt.md`, `system-prompt-en.md`, `claude-desktop-prompt-en.md`, and `README.md`
+- Refactor `docs/AI_Agent_集成指南.md` to reference the new `docs/prompts/` samples and update the state-machine tool table
+
 ### Changed
 
 - Generalize debug adapter layer for multi-adapter support: `dap-client` introduces `AdapterKind` (Codelldb/Gdb) and `AdapterConfig`, replacing the hard-coded `start(path)` with `start(&config)`; `debug-session` gains adapter-aware `launch()` and `configuration_done()` dispatch (fire-and-forget for codelldb, blocking for GDB); `debug-bridge` `start` tool accepts `adapterPath`/`adapterKind`/`adapterArgs` with backward-compatible `codelldbPath` alias; CLI adds `--adapter-path`/`--adapter-kind`/`--adapter-args` flags; all error messages and documentation rewritten to be adapter-agnostic

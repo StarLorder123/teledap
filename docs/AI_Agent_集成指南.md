@@ -152,30 +152,23 @@ asyncio.run(main())
 
 ## 4. 给 AI 的系统提示模板
 
-将以下内容加入 AI Agent 的系统提示：
+示例系统提示已按接入场景整理到 [`docs/prompts/`](./prompts/) 目录，请根据实际使用方式选择对应文件，将其完整内容复制到 AI Agent 的系统提示中，并替换「用户工程信息」一节为实际路径：
 
-```markdown
-你是一个 C/C++ 调试助手，通过 TeleDAP MCP server 控制调试器。
+| 文件 | 说明 |
+|---|---|
+| [`prompts/system-prompt.md`](./prompts/system-prompt.md) | 通用系统提示（stdio / HTTP/SSE 通用） |
+| [`prompts/claude-desktop-prompt.md`](./prompts/claude-desktop-prompt.md) | Claude Desktop / Claude Code 专用 |
+| [`prompts/system-prompt-en.md`](./prompts/system-prompt-en.md) | English general prompt |
+| [`prompts/claude-desktop-prompt-en.md`](./prompts/claude-desktop-prompt-en.md) | English Claude Desktop prompt |
 
-每次执行操作前，先调用 `get_state` 确认当前状态。
+### 核心要点速览
 
-调试生命周期必须按顺序执行：
-1. start（启动调试适配器）
-2. initialize（DAP 初始化握手）
-3. launch（加载被调试程序）
-4. configuration_done（开始运行）
-
-设置断点前，先调用 `register_base_dir` 注册项目根目录。
-
-用户工程信息：
-- 项目根目录：C:\projects\myapp
-- codelldb 路径：C:\tools\codelldb\extension\adapter\codelldb.exe
-- ELF 路径：C:\projects\myapp\build\myapp.elf
-
-注意：
-- 工具错误以 `isError: true` 返回，不是 JSON-RPC error。
-- `tools/list` 会根据当前状态过滤，只能看到当前可用的工具。
-```
+- **每次操作前调用 `get_state`**，根据返回的 `state` 和 `availableTools` 决定下一步。
+- **生命周期顺序不可跳过**：`start` → `initialize` → `launch`/`attach` → `configuration_done`。
+- **设置断点前先注册路径映射**：优先 `register_base_dir`，非标准目录用 `register_path_alias`。
+- **工具错误以 `isError: true` 返回**，不是 JSON-RPC error；先读 `content` 再决定重试或调整。
+- **`tools/list` 按当前状态过滤**，不可用工具说明状态不允许，不要反复尝试。
+- **`launch` 后必须立即调用 `configuration_done`**，否则调试器不会开始运行。
 
 ---
 
@@ -199,9 +192,9 @@ Disconnected ──start()──▶ Connected ──initialize()──▶ Initia
 |---|---|
 | Disconnected | `start`、`register_base_dir`、`register_path_alias`、`get_state` |
 | Connected | `initialize`、`shutdown` |
-| Initialized | `launch`、`attach`、`set_breakpoints`、`shutdown` |
-| Running | `pause`、`get_threads` |
-| Halted | `continue`、`step_over`、`step_in`、`step_out`、`get_stack_trace`、`get_scopes`、`get_variables`、`evaluate` |
+| Initialized | `launch`、`attach`、`set_breakpoints`、`set_function_breakpoints`、`list_breakpoints`、`configuration_done`、`shutdown` |
+| Running | `pause`、`get_threads`、`set_breakpoints`、`set_function_breakpoints`、`list_breakpoints`、`shutdown` |
+| Halted | `continue`、`step_over`、`step_in`、`step_out`、`get_threads`、`get_stack_trace`、`get_scopes`、`get_variables`、`evaluate`、`set_variable`、`assemble_context`、`set_breakpoints`、`set_function_breakpoints`、`list_breakpoints`、`shutdown` |
 
 ---
 
@@ -294,3 +287,4 @@ codelldb 会延迟 `launch` 响应直到收到 `configurationDone`。必须先�
 - [CLAUDE.md](../CLAUDE.md) — 项目架构与开发约定
 - [MCP-Inspector手动测试指南](./MCP-Inspector手动测试指南.md) — 交互式测试方法
 - [MCP-DAP协议桥接架构.md](./MCP-DAP协议桥接架构.md) — 协议桥接设计
+- [docs/prompts/](../prompts/) — 可直接使用的系统提示模板

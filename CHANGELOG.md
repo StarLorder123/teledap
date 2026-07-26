@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - GDB DAP mode support (`--adapter-kind gdb --adapter-args=-i --adapter-args=dap`): adapter-aware `launch`/`configuration_done` behavior, GDB remote debugging via `target` field (codelldb keeps `processCreateCommands`), and runtime-derived default `adapterId` ("gdb" vs "lldb")
 - `list_breakpoints` MCP tool: client-side breakpoint cache tracking source/function breakpoints, refreshed on `set_breakpoints`/`set_function_breakpoints` and DAP `breakpoint` events, cleared on disconnect/termination
 - `get_state` detail parameter: opt-in `"simple"` mode omits the large `capabilities` object; default `"full"` preserves existing behavior
+- TOML config file support: `--config`/`-c` flag auto-executes the full session setup (path mapping, OpenOCD, adapter start, initialize, breakpoints, launch, configurationDone) from a single `.toml` file, replacing 8+ MCP tool calls; works in stdio, HTTP/SSE, and CLI modes; `[options] auto_start` controls the sequence
 
 ### Fixed
 

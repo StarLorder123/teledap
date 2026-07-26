@@ -14,9 +14,10 @@ use openocd_client::OpenOcdClient;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
+use crate::config::Config;
 use crate::mcp_router::{JsonRpcMessage, McpRouter};
 
-pub async fn run() {
+pub async fn run(config: Option<Config>) {
     info!("TeleDAP MCP server starting...");
 
     // ── Session setup ─────────────────────────────────────────────────
@@ -26,6 +27,30 @@ pub async fn run() {
 
     // OpenOCD is an optional extension — not started by default.
     let openocd: Arc<RwLock<Option<OpenOcdClient>>> = Arc::new(RwLock::new(None));
+
+    // ── Auto-setup from config file (before background event loop) ────
+    // Auto-setup must consume the initialized event directly, so it runs
+    // before the background event loop is spawned.
+    if let Some(ref cfg) = config {
+        if cfg.options.auto_start {
+            if let Err(e) = crate::config::auto_configure(&session, &openocd, cfg).await {
+                error!("Auto-setup failed: {e}");
+                cleanup_session(&session, &openocd).await;
+                info!("MCP server shutting down due to configuration error.");
+                return;
+            }
+            info!("Auto-setup complete — session is ready.");
+        } else {
+            // Register path mappings even when auto_start is false
+            for dir in &cfg.path_mapping.base_dirs {
+                session.register_base_dir(dir).await;
+            }
+            for (alias, abs_path) in &cfg.path_mapping.aliases {
+                session.register_path_alias(alias, abs_path).await;
+            }
+            info!("Config path mappings registered (auto_start is off).");
+        }
+    }
 
     // ── Background DAP event handler ──────────────────────────────────
     spawn_dap_event_loop(Arc::clone(&session));

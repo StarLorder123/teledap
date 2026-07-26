@@ -10,6 +10,7 @@
 //! clean for the MCP JSON-RPC protocol.
 
 mod cli;
+mod config;
 mod http_server;
 mod mcp_router;
 mod server;
@@ -23,6 +24,24 @@ async fn main() {
     let args = cli::Args::parse();
     let force_cli = args.cli;
     let is_http = args.http;
+
+    // Load config file if --config was provided
+    let config = match &args.config {
+        Some(path) => {
+            let config_path = std::path::Path::new(path);
+            match config::Config::load(config_path) {
+                Ok(cfg) => {
+                    tracing::info!("Loaded config from {}", config_path.display());
+                    Some(cfg)
+                }
+                Err(e) => {
+                    eprintln!("Config error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        None => None,
+    };
 
     // Tracing always goes to stderr (stdout is the MCP protocol channel)
     let filter = if is_http {
@@ -45,12 +64,12 @@ async fn main() {
 
     if is_http {
         tracing::info!("Starting in HTTP/SSE MCP server mode on port {}", args.port);
-        http_server::run(args.port).await;
+        http_server::run(args.port, config).await;
     } else if force_cli || std::io::stdin().is_terminal() {
         tracing::info!("Starting in CLI verification mode");
-        cli::run(args).await;
+        cli::run(args, config).await;
     } else {
         tracing::info!("Starting in MCP stdio server mode");
-        server::run().await;
+        server::run(config).await;
     }
 }

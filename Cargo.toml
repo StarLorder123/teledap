@@ -16,6 +16,7 @@ uuid.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
+toml.workspace = true
 dap-types.workspace = true
 dap-codec.workspace = true
 dap-client.workspace = true
@@ -69,6 +70,7 @@ thiserror = "2"
 
 # --- CLI ---
 clap = { version = "4", features = ["derive"] }
+toml = "0.8"
 
 # --- Time ---
 chrono = { version = "0.4", features = ["serde"] }

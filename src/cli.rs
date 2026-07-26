@@ -21,6 +21,8 @@ use dap_types::requests::{
 };
 use dap_types::types::{Source, SourceBreakpoint};
 use debug_session::{DebugSession, SessionState};
+
+use crate::config::Config;
 /// TeleDAP — Debug Adapter Protocol client for AI-driven debugging.
 #[derive(Parser, Debug)]
 #[command(name = "teledap", version, about)]
@@ -83,9 +85,20 @@ pub struct Args {
     /// Directory for debug trace JSONL output.
     #[arg(long)]
     log_dir: Option<String>,
+
+    /// Path to a TOML configuration file. When provided, config values
+    /// fill in defaults; explicit CLI arguments take precedence.
+    #[arg(short = 'c', long = "config")]
+    pub config: Option<String>,
 }
 
-pub async fn run(args: Args) {
+pub async fn run(mut args: Args, config: Option<Config>) {
+    // If a config file was provided, merge its values into args.
+    // CLI arguments take precedence (only fill in defaults/config values).
+    if let Some(ref cfg) = config {
+        merge_config_into_args(&mut args, cfg).await;
+    }
+
     // Resolve adapter path (prefer --adapter-path, fall back to deprecated --codelldb-path)
     let adapter_path = if !args.codelldb_path.is_empty() {
         tracing::warn!("--codelldb-path is deprecated, use --adapter-path instead");
@@ -121,6 +134,16 @@ pub async fn run(args: Args) {
         tracing::info!("liblldb path configured: {}", lldb_path);
     }
     let session = DebugSession::new(client, Some(trace));
+
+    // Register path mappings from config file (if provided)
+    if let Some(ref cfg) = config {
+        for dir in &cfg.path_mapping.base_dirs {
+            session.register_base_dir(dir).await;
+        }
+        for (alias, abs_path) in &cfg.path_mapping.aliases {
+            session.register_path_alias(alias, abs_path).await;
+        }
+    }
 
     // ── 1. Start debug adapter ─────────────────────────────────────
     if let Err(e) = session.start(&adapter_config).await {
@@ -613,6 +636,100 @@ pub async fn run(args: Args) {
     tracing::info!("TeleDAP Phase 2 verification complete.");
 }
 
+/// Merge configuration file values into CLI args.
+///
+/// CLI arguments take precedence: a config file value is only used when the
+/// corresponding CLI argument is still at its default value.
+async fn merge_config_into_args(args: &mut Args, config: &Config) {
+    // Adapter path — only override if CLI still has the default
+    if args.adapter_path == "codelldb"
+        && args.codelldb_path.is_empty()
+        && config.adapter.path != "codelldb"
+    {
+        tracing::info!("Using adapter path from config: {}", config.adapter.path);
+        args.adapter_path = config.adapter.path.clone();
+    }
+
+    // Adapter kind
+    if args.adapter_kind == "codelldb" && config.adapter.kind != "codelldb" {
+        tracing::info!("Using adapter kind from config: {}", config.adapter.kind);
+        args.adapter_kind = config.adapter.kind.clone();
+    }
+
+    // Adapter args
+    if args.adapter_args.is_empty() && !config.adapter.args.is_empty() {
+        tracing::info!("Using adapter args from config: {:?}", config.adapter.args);
+        args.adapter_args = config.adapter.args.clone();
+    }
+
+    // liblldb path
+    if args.liblldb_path.is_none() {
+        if let Some(ref lldb) = config.adapter.liblldb_path {
+            if !lldb.is_empty() {
+                tracing::info!("Using liblldb path from config: {lldb}");
+                args.liblldb_path = Some(lldb.clone());
+            }
+        }
+    }
+
+    // ELF path (launch program)
+    if args.elf_path.is_empty() && config.launch.is_configured() {
+        tracing::info!("Using ELF path from config: {}", config.launch.program);
+        args.elf_path = config.launch.program.clone();
+    }
+
+    // GDB remote
+    if args.gdb_remote.is_none() {
+        if let Some(ref remote) = config.launch.gdb_remote {
+            if !remote.is_empty() {
+                tracing::info!("Using gdb_remote from config: {remote}");
+                args.gdb_remote = Some(remote.clone());
+            }
+        }
+    }
+
+    // Source path — use first breakpoint entry's source from config
+    if args.source_path.is_empty() {
+        if let Some(first_bp) = config.breakpoints.first() {
+            tracing::info!("Using source path from config: {}", first_bp.source);
+            args.source_path = first_bp.source.clone();
+        }
+    }
+
+    // Breakpoints — if CLI didn't specify any, collect from config
+    if args.breakpoints.is_empty() && !config.breakpoints.is_empty() {
+        let all_lines: Vec<String> = config
+            .breakpoints
+            .iter()
+            .flat_map(|entry| {
+                if !entry.breakpoints.is_empty() {
+                    entry
+                        .breakpoints
+                        .iter()
+                        .map(|bp| bp.line.to_string())
+                        .collect::<Vec<_>>()
+                } else {
+                    entry.lines.iter().map(|l| l.to_string()).collect()
+                }
+            })
+            .collect();
+        if !all_lines.is_empty() {
+            let bp_str = all_lines.join(",");
+            tracing::info!("Using breakpoints from config: {bp_str}");
+            args.breakpoints = bp_str;
+        }
+    }
+
+    // Log dir
+    if args.log_dir.is_none() {
+        if let Some(ref ocd_log) = config.openocd.log_dir {
+            if !ocd_log.is_empty() {
+                args.log_dir = Some(ocd_log.clone());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -690,5 +807,23 @@ mod tests {
     fn test_liblldb_path_arg_none_by_default() {
         let args = Args::try_parse_from(["teledap"]).unwrap();
         assert_eq!(args.liblldb_path, None);
+    }
+
+    #[test]
+    fn test_config_arg_parsed() {
+        let args = Args::try_parse_from(["teledap", "--config", "teledap.toml"]).unwrap();
+        assert_eq!(args.config.as_deref(), Some("teledap.toml"));
+    }
+
+    #[test]
+    fn test_config_arg_short() {
+        let args = Args::try_parse_from(["teledap", "-c", "config.toml"]).unwrap();
+        assert_eq!(args.config.as_deref(), Some("config.toml"));
+    }
+
+    #[test]
+    fn test_config_arg_none_by_default() {
+        let args = Args::try_parse_from(["teledap"]).unwrap();
+        assert_eq!(args.config, None);
     }
 }

@@ -32,6 +32,7 @@ use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
+use crate::config::Config;
 use crate::mcp_router::{JsonRpcMessage, McpRouter};
 use crate::server::{cleanup_session, spawn_dap_event_loop};
 
@@ -122,7 +123,7 @@ struct MessageQuery {
 }
 
 /// Run the HTTP/SSE MCP server on the given port.
-pub async fn run(port: u16) {
+pub async fn run(port: u16, config: Option<Config>) {
     info!("TeleDAP HTTP/SSE MCP server starting on port {port}...");
 
     // ── Session setup ─────────────────────────────────────────────────
@@ -135,6 +136,30 @@ pub async fn run(port: u16) {
         Arc::clone(&openocd),
         trace.clone(),
     ));
+
+    // ── Auto-setup from config file (before background tasks) ─────────
+    // Auto-setup must consume the initialized event directly, so it runs
+    // before the background event loop is spawned.
+    if let Some(ref cfg) = config {
+        if cfg.options.auto_start {
+            if let Err(e) = crate::config::auto_configure(&session, &openocd, cfg).await {
+                error!("Auto-setup failed: {e}");
+                cleanup_session(&session, &openocd).await;
+                info!("HTTP/SSE server shutting down due to configuration error.");
+                return;
+            }
+            info!("Auto-setup complete — session is ready.");
+        } else {
+            // Register path mappings even when auto_start is false
+            for dir in &cfg.path_mapping.base_dirs {
+                session.register_base_dir(dir).await;
+            }
+            for (alias, abs_path) in &cfg.path_mapping.aliases {
+                session.register_path_alias(alias, abs_path).await;
+            }
+            info!("Config path mappings registered (auto_start is off).");
+        }
+    }
 
     // ── Background tasks ──────────────────────────────────────────────
     spawn_dap_event_loop(Arc::clone(&session));

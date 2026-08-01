@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use dap_types::types::{Breakpoint, FunctionBreakpoint, SourceBreakpoint};
+use dap_types::types::{Breakpoint, DataBreakpoint, FunctionBreakpoint, SourceBreakpoint};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -16,6 +16,8 @@ use tokio::sync::RwLock;
 pub enum BreakpointKind {
     Source,
     Function,
+    Data,
+    Exception,
 }
 
 /// A breakpoint entry suitable for returning from the `list_breakpoints` tool.
@@ -24,7 +26,7 @@ pub enum BreakpointKind {
 pub struct CachedBreakpoint {
     /// Breakpoint ID assigned by the debug adapter (if verified).
     pub id: Option<u64>,
-    /// Type discriminator: "source" or "function".
+    /// Type discriminator: "source", "function", "data", or "exception".
     pub kind: BreakpointKind,
     /// Source path (reverse-mapped to alias form when listed if possible).
     pub source_path: Option<String>,
@@ -38,6 +40,15 @@ pub struct CachedBreakpoint {
     pub condition: Option<String>,
     /// Hit condition expression (if set).
     pub hit_condition: Option<String>,
+    /// Log message for logpoints. Expressions in `{}` are interpolated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_message: Option<String>,
+    /// Data ID for data breakpoints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_id: Option<String>,
+    /// Access type for data breakpoints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_type: Option<String>,
     /// Whether the breakpoint was successfully verified by the adapter.
     pub verified: bool,
     /// Adapter message about the breakpoint state.
@@ -55,6 +66,9 @@ impl CachedBreakpoint {
             function_name: None,
             condition: request.condition.clone(),
             hit_condition: request.hit_condition.clone(),
+            log_message: request.log_message.clone(),
+            data_id: None,
+            access_type: None,
             verified: response.verified,
             message: response.message.clone(),
         }
@@ -70,6 +84,27 @@ impl CachedBreakpoint {
             function_name: Some(request.name.clone()),
             condition: request.condition.clone(),
             hit_condition: request.hit_condition.clone(),
+            log_message: None,
+            data_id: None,
+            access_type: None,
+            verified: response.verified,
+            message: response.message.clone(),
+        }
+    }
+
+    fn from_data(request: &DataBreakpoint, response: &Breakpoint) -> Self {
+        CachedBreakpoint {
+            id: response.id,
+            kind: BreakpointKind::Data,
+            source_path: response.source.as_ref().and_then(|s| s.path.clone()),
+            line: response.line,
+            column: response.column,
+            function_name: None,
+            condition: request.condition.clone(),
+            hit_condition: request.hit_condition.clone(),
+            log_message: None,
+            data_id: Some(request.data_id.clone()),
+            access_type: request.access_type.as_ref().map(|a| format!("{:?}", a)),
             verified: response.verified,
             message: response.message.clone(),
         }
@@ -83,6 +118,8 @@ pub struct BreakpointCache {
     source_breakpoints: RwLock<HashMap<String, Vec<CachedBreakpoint>>>,
     /// Function breakpoints (as returned by the last `setFunctionBreakpoints` call).
     function_breakpoints: RwLock<Vec<CachedBreakpoint>>,
+    /// Data breakpoints (as returned by the last `setDataBreakpoints` call).
+    data_breakpoints: RwLock<Vec<CachedBreakpoint>>,
 }
 
 impl BreakpointCache {
@@ -91,6 +128,7 @@ impl BreakpointCache {
         BreakpointCache {
             source_breakpoints: RwLock::new(HashMap::new()),
             function_breakpoints: RwLock::new(Vec::new()),
+            data_breakpoints: RwLock::new(Vec::new()),
         }
     }
 
@@ -126,6 +164,21 @@ impl BreakpointCache {
             .collect();
 
         *self.function_breakpoints.write().await = items;
+    }
+
+    /// Replace the stored data breakpoints.
+    pub async fn update_data_breakpoints(
+        &self,
+        request: &[DataBreakpoint],
+        response: &[Breakpoint],
+    ) {
+        let items: Vec<CachedBreakpoint> = request
+            .iter()
+            .zip(response.iter())
+            .map(|(req, resp)| CachedBreakpoint::from_data(req, resp))
+            .collect();
+
+        *self.data_breakpoints.write().await = items;
     }
 
     /// Update a single breakpoint by ID, typically from a DAP `breakpoint` event.
@@ -190,6 +243,7 @@ impl BreakpointCache {
         drop(map);
 
         result.extend(self.function_breakpoints.read().await.iter().cloned());
+        result.extend(self.data_breakpoints.read().await.iter().cloned());
         result
     }
 
@@ -197,6 +251,7 @@ impl BreakpointCache {
     pub async fn clear(&self) {
         self.source_breakpoints.write().await.clear();
         self.function_breakpoints.write().await.clear();
+        self.data_breakpoints.write().await.clear();
     }
 }
 
@@ -227,6 +282,7 @@ mod tests {
             name: name.to_string(),
             condition: None,
             hit_condition: None,
+            mode: None,
         }
     }
 

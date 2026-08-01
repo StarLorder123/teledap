@@ -9,20 +9,22 @@ use dap_types::{
     events::{BreakpointEventBody, ContinuedEventBody, ExitedEventBody, StoppedEventBody},
     requests::{
         AttachRequest, AttachRequestArguments, ConfigurationDoneRequest, ContinueArguments,
-        ContinueRequest, EvaluateArguments, EvaluateRequest, InitializeRequest,
+        ContinueRequest, DataBreakpointInfoArguments, DataBreakpointInfoRequest,
+        DataBreakpointInfoResponse, EvaluateArguments, EvaluateRequest, InitializeRequest,
         InitializeRequestArguments, LaunchRequest, LaunchRequestArguments, NextArguments,
         NextRequest, NoArguments, PauseArguments, PauseRequest, ScopesArguments, ScopesRequest,
-        SetBreakpointsArguments, SetBreakpointsRequest, SetFunctionBreakpointsArguments,
-        SetFunctionBreakpointsRequest, SetVariableArguments, SetVariableRequest,
+        SetBreakpointsArguments, SetBreakpointsRequest, SetDataBreakpointsArguments,
+        SetDataBreakpointsRequest, SetDataBreakpointsResponse, SetExceptionBreakpointsArguments,
+        SetExceptionBreakpointsRequest, SetExceptionBreakpointsResponse,
+        SetFunctionBreakpointsArguments, SetFunctionBreakpointsRequest,
+        SetFunctionBreakpointsResponse, SetVariableArguments, SetVariableRequest,
         StackTraceArguments, StackTraceRequest, StepInArguments, StepInRequest, StepOutArguments,
         StepOutRequest, ThreadsRequest, VariablesArguments, VariablesRequest,
     },
-    requests::{
-        ContinueResponse, EvaluateResponse, SetBreakpointsResponse, SetFunctionBreakpointsResponse,
-        SetVariableResponse,
-    },
+    requests::{ContinueResponse, EvaluateResponse, SetBreakpointsResponse, SetVariableResponse},
     types::{
-        Breakpoint, FunctionBreakpoint, Scope, SourceBreakpoint, StackFrame, Thread, Variable,
+        Breakpoint, DataBreakpoint, FunctionBreakpoint, Scope, SourceBreakpoint, StackFrame,
+        Thread, Variable,
     },
 };
 
@@ -489,6 +491,49 @@ impl DebugSession {
         Ok(resp)
     }
 
+    /// Set data breakpoints (watchpoints). Valid from Initialized, Running, or Halted.
+    pub async fn set_data_breakpoints(
+        &self,
+        args: SetDataBreakpointsArguments,
+    ) -> Result<SetDataBreakpointsResponse, DebugSessionError> {
+        self.gate("set_data_breakpoints").await?;
+        let request_breakpoints = args.breakpoints.clone();
+        let resp = self
+            .client
+            .send_request::<SetDataBreakpointsRequest>(args)
+            .await?;
+        self.breakpoint_cache
+            .update_data_breakpoints(&request_breakpoints, &resp.breakpoints)
+            .await;
+        Ok(resp)
+    }
+
+    /// Query data breakpoint info for a variable. Valid only from Halted.
+    pub async fn data_breakpoint_info(
+        &self,
+        args: DataBreakpointInfoArguments,
+    ) -> Result<DataBreakpointInfoResponse, DebugSessionError> {
+        self.gate("data_breakpoint_info").await?;
+        let resp = self
+            .client
+            .send_request::<DataBreakpointInfoRequest>(args)
+            .await?;
+        Ok(resp)
+    }
+
+    /// Set exception breakpoints. Valid from Initialized, Running, or Halted.
+    pub async fn set_exception_breakpoints(
+        &self,
+        args: SetExceptionBreakpointsArguments,
+    ) -> Result<SetExceptionBreakpointsResponse, DebugSessionError> {
+        self.gate("set_exception_breakpoints").await?;
+        let resp = self
+            .client
+            .send_request::<SetExceptionBreakpointsRequest>(args)
+            .await?;
+        Ok(resp)
+    }
+
     /// Update the cached source breakpoints after a successful `setBreakpoints` call.
     pub async fn update_source_breakpoints(
         &self,
@@ -509,6 +554,17 @@ impl DebugSession {
     ) {
         self.breakpoint_cache
             .update_function_breakpoints(request, response)
+            .await;
+    }
+
+    /// Update the cached data breakpoints after a successful `setDataBreakpoints` call.
+    pub async fn update_data_breakpoints(
+        &self,
+        request: &[DataBreakpoint],
+        response: &[Breakpoint],
+    ) {
+        self.breakpoint_cache
+            .update_data_breakpoints(request, response)
             .await;
     }
 

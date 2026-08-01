@@ -115,6 +115,8 @@ pub struct PropertySchema {
     pub items: Option<Box<PropertySchema>>,
     #[serde(rename = "enum", skip_serializing_if = "Option::is_none")]
     pub enum_values: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub properties: Option<HashMap<String, PropertySchema>>,
 }
 
 impl JsonSchema {
@@ -156,6 +158,7 @@ impl PropertySchema {
             description: description.to_string(),
             items: None,
             enum_values: None,
+            properties: None,
         }
     }
 
@@ -165,6 +168,7 @@ impl PropertySchema {
             description: description.to_string(),
             items: None,
             enum_values: None,
+            properties: None,
         }
     }
 
@@ -174,6 +178,7 @@ impl PropertySchema {
             description: description.to_string(),
             items: None,
             enum_values: None,
+            properties: None,
         }
     }
 
@@ -186,8 +191,10 @@ impl PropertySchema {
                 description: String::new(),
                 items: None,
                 enum_values: None,
+                properties: None,
             })),
             enum_values: None,
+            properties: None,
         }
     }
 
@@ -200,8 +207,10 @@ impl PropertySchema {
                 description: String::new(),
                 items: None,
                 enum_values: None,
+                properties: None,
             })),
             enum_values: None,
+            properties: None,
         }
     }
 
@@ -209,6 +218,36 @@ impl PropertySchema {
     pub fn with_enum(mut self, values: &[&str]) -> Self {
         self.enum_values = Some(values.iter().map(|v| v.to_string()).collect());
         self
+    }
+
+    /// Create an object property with named sub-properties.
+    pub fn object_with_properties(
+        description: &str,
+        properties: HashMap<String, PropertySchema>,
+    ) -> Self {
+        PropertySchema {
+            prop_type: "object".to_string(),
+            description: description.to_string(),
+            items: None,
+            enum_values: None,
+            properties: Some(properties),
+        }
+    }
+
+    /// Create an array of objects with named sub-properties.
+    pub fn array_of_objects(
+        description: &str,
+        properties: HashMap<String, PropertySchema>,
+    ) -> Self {
+        PropertySchema {
+            prop_type: "array".to_string(),
+            description: description.to_string(),
+            items: Some(Box::new(PropertySchema::object_with_properties(
+                "", properties,
+            ))),
+            enum_values: None,
+            properties: None,
+        }
     }
 }
 

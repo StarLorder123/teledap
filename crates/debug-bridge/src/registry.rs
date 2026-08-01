@@ -109,6 +109,15 @@ impl ToolRegistry {
             "set_function_breakpoints" => {
                 handlers::breakpoint::handle_set_function_breakpoints(session, params).await
             }
+            "set_data_breakpoints" => {
+                handlers::breakpoint::handle_set_data_breakpoints(session, params).await
+            }
+            "data_breakpoint_info" => {
+                handlers::breakpoint::handle_data_breakpoint_info(session, params).await
+            }
+            "set_exception_breakpoints" => {
+                handlers::breakpoint::handle_set_exception_breakpoints(session, params).await
+            }
             "list_breakpoints" => {
                 handlers::breakpoint::handle_list_breakpoints(session, params).await
             }

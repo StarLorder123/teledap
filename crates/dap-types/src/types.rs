@@ -326,6 +326,9 @@ pub struct FunctionBreakpoint {
     /// Expression for hit count conditional breakpoints.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hit_condition: Option<String>,
+    /// Breakpoint mode from Capabilities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 // ── DataBreakpoint ─────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 //! MCP tool definitions: names, titles, descriptions, and JSON input schemas.
 //!
-//! Defines 30 tools: 21 gated debug operations (matching `ToolAvailability`
+//! Defines 33 tools: 24 gated debug operations (matching `ToolAvailability`
 //! operations) plus 4 utility tools with no state gating, plus 5 OpenOCD tools.
 //!
 //! Each tool's `inputSchema` is built from `JsonSchema` / `PropertySchema`
@@ -32,6 +32,137 @@ fn array_of(desc: &str, item_type: &str) -> PropertySchema {
 
 fn object_of(desc: &str, item_type: &str) -> PropertySchema {
     PropertySchema::object_of(desc, item_type)
+}
+
+/// Build a source breakpoint item schema for the breakpoints array.
+fn source_bp_item_schema() -> PropertySchema {
+    let mut props = std::collections::HashMap::new();
+    props.insert("line".into(), integer("Source line number (1-based)"));
+    props.insert(
+        "column".into(),
+        integer("Optional start column in UTF-16 code units"),
+    );
+    props.insert(
+        "condition".into(),
+        string("Optional conditional expression (e.g. \"x > 5\")"),
+    );
+    props.insert(
+        "hitCondition".into(),
+        string("Optional hit count condition (e.g. \">5\")"),
+    );
+    props.insert(
+        "logMessage".into(),
+        string("Optional log message for logpoints. Expressions in {} are interpolated."),
+    );
+    props.insert(
+        "mode".into(),
+        string("Optional breakpoint mode from adapter capabilities"),
+    );
+    PropertySchema::object_with_properties("Breakpoint location specification", props)
+}
+
+fn source_bp_array_schema() -> PropertySchema {
+    PropertySchema {
+        prop_type: "array".into(),
+        description: "Breakpoint locations with optional condition, hitCondition, logMessage, column, and mode".into(),
+        items: Some(Box::new(source_bp_item_schema())),
+        enum_values: None,
+        properties: None,
+    }
+}
+
+/// Build a function breakpoint item schema for the per-function format.
+fn fn_bp_item_schema() -> PropertySchema {
+    let mut props = std::collections::HashMap::new();
+    props.insert("name".into(), string("Function name to break on"));
+    props.insert(
+        "condition".into(),
+        string("Optional conditional expression"),
+    );
+    props.insert(
+        "hitCondition".into(),
+        string("Optional hit count condition (e.g. \">5\")"),
+    );
+    props.insert(
+        "mode".into(),
+        string("Optional breakpoint mode from adapter capabilities"),
+    );
+    PropertySchema::object_with_properties("Function breakpoint specification", props)
+}
+
+fn fn_bp_array_schema() -> PropertySchema {
+    PropertySchema {
+        prop_type: "array".into(),
+        description: "Per-function entries (new format) — each with name, optional condition, hitCondition, and mode".into(),
+        items: Some(Box::new(fn_bp_item_schema())),
+        enum_values: None,
+        properties: None,
+    }
+}
+
+/// Build a data breakpoint item schema.
+fn data_bp_item_schema() -> PropertySchema {
+    let mut props = std::collections::HashMap::new();
+    props.insert("dataId".into(), string("Data ID from data_breakpoint_info"));
+    props.insert("accessType".into(), {
+        PropertySchema::string("Access type: \"read\", \"write\", or \"readWrite\"").with_enum(&[
+            "read",
+            "write",
+            "readWrite",
+        ])
+    });
+    props.insert(
+        "condition".into(),
+        string("Optional conditional expression"),
+    );
+    props.insert(
+        "hitCondition".into(),
+        string("Optional hit count condition (e.g. \">5\")"),
+    );
+    PropertySchema::object_with_properties("Data breakpoint specification", props)
+}
+
+fn data_bp_array_schema() -> PropertySchema {
+    PropertySchema {
+        prop_type: "array".into(),
+        description:
+            "Data breakpoints with dataId, optional accessType, condition, and hitCondition".into(),
+        items: Some(Box::new(data_bp_item_schema())),
+        enum_values: None,
+        properties: None,
+    }
+}
+
+/// Build an exception breakpoint item schema.
+fn exception_bp_item_schema() -> PropertySchema {
+    let mut props = std::collections::HashMap::new();
+    props.insert(
+        "filter".into(),
+        string("Exception filter ID (e.g. \"cpp_throw\", \"unhandled\")"),
+    );
+    props.insert(
+        "enabled".into(),
+        boolean("Whether this filter is enabled (default: true)"),
+    );
+    props.insert(
+        "condition".into(),
+        string("Optional conditional expression"),
+    );
+    props.insert(
+        "mode".into(),
+        string("Optional breakpoint mode from adapter capabilities"),
+    );
+    PropertySchema::object_with_properties("Exception breakpoint specification", props)
+}
+
+fn exception_bp_array_schema() -> PropertySchema {
+    PropertySchema {
+        prop_type: "array".into(),
+        description: "Exception breakpoint filters with filter ID, optional enabled flag, condition, and mode".into(),
+        items: Some(Box::new(exception_bp_item_schema())),
+        enum_values: None,
+        properties: None,
+    }
 }
 
 // ── Breakpoint item schema ───────────────────────────────────────────────
@@ -137,29 +268,59 @@ pub fn all_tools() -> Vec<Tool> {
         },
 
         // ═══════════════════════════════════════════════════════════════
-        // Breakpoint tools (3 gated)
+        // Breakpoint tools (6 gated)
         // ═══════════════════════════════════════════════════════════════
         Tool {
             name: "set_breakpoints".into(),
             title: "Set source breakpoints".into(),
-            description: "Set breakpoints on source file lines. The source path is resolved through the path mapper if relative. Returns verified breakpoints.".into(),
+            description: "Set breakpoints on source file lines. Each breakpoint can optionally specify column, condition, hitCondition, logMessage, and mode. The source path is resolved through the path mapper if relative. Returns verified breakpoints.".into(),
             input_schema: object_schema()
                 .with_required("sourcePath", string("Path to the source file (relative or absolute)"))
-                .with_required("breakpoints", array_of("Breakpoint locations", "object")),
+                .with_required("breakpoints", source_bp_array_schema()),
         },
         Tool {
             name: "set_function_breakpoints".into(),
             title: "Set function breakpoints".into(),
-            description: "Set breakpoints on function names. The debugger will stop when any of the named functions are entered.".into(),
+            description: "Set breakpoints on function names. Supports both a legacy flat format (\"names\" + optional shared \"condition\"/\"hitCondition\") and a new per-function format (\"breakpoints\" array with individual name/condition/hitCondition/mode per entry). The debugger will stop when any of the named functions are entered.".into(),
             input_schema: object_schema()
-                .with_required("names", array_of("Function names to break on", "string"))
-                .with_optional("condition", string("Optional conditional expression"))
-                .with_optional("hitCondition", string("Optional hit count condition (e.g. \">5\")")),
+                .with_optional("breakpoints", fn_bp_array_schema())
+                .with_optional("names", array_of("Function names to break on (legacy format)", "string"))
+                .with_optional("condition", string("Optional shared conditional expression (legacy format)"))
+                .with_optional("hitCondition", string("Optional shared hit count condition (legacy format)")),
+        },
+        Tool {
+            name: "set_data_breakpoints".into(),
+            title: "Set data breakpoints (watchpoints)".into(),
+            description: "Set data breakpoints (watchpoints) on variables. The debugger will stop when data at the specified locations is accessed. Use data_breakpoint_info first to get the data ID for a variable. Each entry specifies a dataId and optional accessType (read/write/readWrite), condition, and hitCondition.".into(),
+            input_schema: object_schema()
+                .with_required("breakpoints", data_bp_array_schema()),
+        },
+        Tool {
+            name: "data_breakpoint_info".into(),
+            title: "Get data breakpoint info".into(),
+            description: "Query the debug adapter for information about a variable that can be used to set a data breakpoint (watchpoint). Returns a dataId and description that can be passed to set_data_breakpoints. Only available when halted.".into(),
+            input_schema: object_schema()
+                .with_required("name", string("Variable name to query"))
+                .with_optional("variablesReference", integer("Optional variables reference for the parent scope"))
+                .with_optional("frameId", integer("Optional frame ID for context"))
+                .with_optional("bytes", integer("Optional size of the variable in bytes"))
+                .with_optional("asAddress", boolean("Whether to treat name as an address (default: false)"))
+                .with_optional("mode", string("Optional breakpoint mode from adapter capabilities")),
+        },
+        Tool {
+            name: "set_exception_breakpoints".into(),
+            title: "Set exception breakpoints".into(),
+            description: "Configure which exceptions should break into the debugger. Each entry specifies a filter ID (e.g. \"cpp_throw\", \"unhandled\") with optional condition and mode. Also supports an optional breakMode (never/always/unhandled/userUnhandled) and exception path filtering.".into(),
+            input_schema: object_schema()
+                .with_required("breakpoints", exception_bp_array_schema())
+                .with_optional("breakMode", PropertySchema::string("Exception break mode: \"never\", \"always\", \"unhandled\", or \"userUnhandled\"").with_enum(&["never", "always", "unhandled", "userUnhandled"]))
+                .with_optional("exceptionPathNames", array_of("Exception path segment names for tree-based selection", "string"))
+                .with_optional("exceptionPathNegate", boolean("Whether to negate the exception path matching (default: false)")),
         },
         Tool {
             name: "list_breakpoints".into(),
             title: "List breakpoints".into(),
-            description: "List all breakpoints currently known to TeleDAP, including source breakpoints and function breakpoints with their verification status, locations, and conditions.".into(),
+            description: "List all breakpoints currently known to TeleDAP, including source, function, data, and exception breakpoints with their verification status, locations, and conditions.".into(),
             input_schema: object_schema(),
         },
 
@@ -325,6 +486,9 @@ pub fn tool_operation(name: &str) -> Option<&'static str> {
         // ── Breakpoints ───────────────────────────────────────────────
         "set_breakpoints" => Some("set_breakpoints"),
         "set_function_breakpoints" => Some("set_function_breakpoints"),
+        "set_data_breakpoints" => Some("set_data_breakpoints"),
+        "data_breakpoint_info" => Some("data_breakpoint_info"),
+        "set_exception_breakpoints" => Some("set_exception_breakpoints"),
         "list_breakpoints" => Some("list_breakpoints"),
         // ── Introspection ─────────────────────────────────────────────
         "get_threads" => Some("get_threads"),
@@ -358,7 +522,7 @@ mod tests {
     #[test]
     fn test_all_tools_count() {
         let tools = all_tools();
-        assert_eq!(tools.len(), 30, "Should be exactly 30 tools");
+        assert_eq!(tools.len(), 33, "Should be exactly 33 tools");
     }
 
     #[test]
@@ -399,7 +563,7 @@ mod tests {
             .iter()
             .filter(|t| tool_operation(&t.name).is_some())
             .count();
-        assert_eq!(gated_count, 21, "Should have exactly 21 gated tools");
+        assert_eq!(gated_count, 24, "Should have exactly 24 gated tools");
     }
 
     #[test]

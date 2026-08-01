@@ -21,6 +21,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Data breakpoints (watchpoints) support: `set_data_breakpoints` and `data_breakpoint_info` MCP tools with access-type selection (read/write/readWrite), conditions, and hit conditions; breakpoint cache extended with data/exception kinds and access-type tracking
+- Exception breakpoints support: `set_exception_breakpoints` MCP tool with per-filter conditions, break mode (never/always/unhandled/userUnhandled), and exception-path tree filtering
+- Enhanced breakpoint configuration: `set_breakpoints` now accepts column, hitCondition, logMessage, and mode; `set_function_breakpoints` supports a new per-function format with individual conditions/hitConditions/modes alongside the legacy flat format; structured JSON input schemas with typed sub-properties for all breakpoint tools
 - HTTP/SSE MCP server mode: `cargo run -- --http --port 8080` exposes the same tool surface over HTTP/SSE, allowing multiple clients to share a single `DebugSession`/`OpenOcdClient`; follows MCP 2025-03-26 convention (`GET /sse` returns a unique `session_id` endpoint, `POST /message` returns 202 and pushes responses via SSE); broadcasts `notifications/tools/list_changed` on state transitions
 - GDB DAP mode support (`--adapter-kind gdb --adapter-args=-i --adapter-args=dap`): adapter-aware `launch`/`configuration_done` behavior, GDB remote debugging via `target` field (codelldb keeps `processCreateCommands`), and runtime-derived default `adapterId` ("gdb" vs "lldb")
 - `list_breakpoints` MCP tool: client-side breakpoint cache tracking source/function breakpoints, refreshed on `set_breakpoints`/`set_function_breakpoints` and DAP `breakpoint` events, cleared on disconnect/termination

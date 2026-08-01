@@ -41,6 +41,17 @@ impl ToolAvailability {
                 SessionState::Running,
                 SessionState::Halted,
             ],
+            "set_data_breakpoints" => &[
+                SessionState::Initialized,
+                SessionState::Running,
+                SessionState::Halted,
+            ],
+            "set_exception_breakpoints" => &[
+                SessionState::Initialized,
+                SessionState::Running,
+                SessionState::Halted,
+            ],
+            "data_breakpoint_info" => &[SessionState::Halted],
             "list_breakpoints" => &[
                 SessionState::Initialized,
                 SessionState::Running,
@@ -109,6 +120,9 @@ const ALL_OPERATIONS: &[&str] = &[
     "pause",
     "set_breakpoints",
     "set_function_breakpoints",
+    "set_data_breakpoints",
+    "set_exception_breakpoints",
+    "data_breakpoint_info",
     "list_breakpoints",
     "get_threads",
     "get_stack_trace",
@@ -171,11 +185,16 @@ mod tests {
         assert!(ops.contains(&"attach"));
         assert!(ops.contains(&"configuration_done"));
         assert!(ops.contains(&"set_breakpoints"));
+        assert!(ops.contains(&"set_function_breakpoints"));
+        assert!(ops.contains(&"set_data_breakpoints"));
+        assert!(ops.contains(&"set_exception_breakpoints"));
         assert!(ops.contains(&"list_breakpoints"));
         assert!(ops.contains(&"shutdown"));
         // Cannot execute yet
         assert!(!ops.contains(&"continue"));
         assert!(!ops.contains(&"pause"));
+        // data_breakpoint_info requires Halted
+        assert!(!ops.contains(&"data_breakpoint_info"));
     }
 
     #[test]
@@ -183,12 +202,16 @@ mod tests {
         let ops = ToolAvailability::operations_for_state(SessionState::Running);
         assert!(ops.contains(&"pause"));
         assert!(ops.contains(&"set_breakpoints"));
+        assert!(ops.contains(&"set_function_breakpoints"));
+        assert!(ops.contains(&"set_data_breakpoints"));
+        assert!(ops.contains(&"set_exception_breakpoints"));
         assert!(ops.contains(&"list_breakpoints"));
         assert!(ops.contains(&"shutdown"));
         assert!(ops.contains(&"get_threads"));
         // Cannot introspect deeply while running
         assert!(!ops.contains(&"get_stack_trace"));
         assert!(!ops.contains(&"evaluate"));
+        assert!(!ops.contains(&"data_breakpoint_info"));
     }
 
     #[test]
@@ -206,6 +229,10 @@ mod tests {
         assert!(ops.contains(&"set_variable"));
         assert!(ops.contains(&"assemble_context"));
         assert!(ops.contains(&"set_breakpoints"));
+        assert!(ops.contains(&"set_function_breakpoints"));
+        assert!(ops.contains(&"set_data_breakpoints"));
+        assert!(ops.contains(&"set_exception_breakpoints"));
+        assert!(ops.contains(&"data_breakpoint_info"));
         assert!(ops.contains(&"list_breakpoints"));
         assert!(ops.contains(&"shutdown"));
         // Cannot pause when already halted
